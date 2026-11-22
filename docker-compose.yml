@@ -1,0 +1,48 @@
+# Local development infrastructure for the ShikkhaAI API.
+#   Start:  docker compose up -d
+#   Status: docker compose ps
+#   Stop:   docker compose down          (keeps data)
+#   Reset:  docker compose down -v       (deletes all local data)
+name: shikkhaai
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: shikkhaai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shikkhaai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shikkhaai_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-shikkhaai}
+      TZ: Asia/Dhaka
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: shikkhaai-redis
+    restart: unless-stopped
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
