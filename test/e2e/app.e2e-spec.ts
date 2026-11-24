@@ -52,15 +52,18 @@ describe('HTTP pipeline (e2e)', () => {
       .post('/api/v1/auth/login')
       .send({ identifier: 'student@example.com', extra: 'not allowed' })
       .expect(400);
-    expect(response.body.code).toBe('VALIDATION_FAILED');
+    expect(response.body.code).toBe('VALIDATION');
     expect(response.body.errors).toHaveProperty('password');
     expect(response.body.errors).toHaveProperty('extra');
   });
 
-  it('unimplemented auth answers 501, not a fake success', async () => {
-    await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ identifier: 'student@example.com', password: 'secret123' })
-      .expect(501);
+  it('unknown collections answer 404 from the generic resource routes', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/not-a-collection').expect(404);
+    expect(response.body).toMatchObject({ success: false, code: 'NOT_FOUND' });
+  });
+
+  it('dedicated routes are not shadowed by the generic catch-all', async () => {
+    // /exams/custom belongs to ExamsController (auth required), not to GET/POST /:resource/:id.
+    await request(app.getHttpServer()).post('/api/v1/exams/custom').send({}).expect(401);
   });
 });

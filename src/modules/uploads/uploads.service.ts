@@ -84,4 +84,9 @@ export class UploadsService {
     this.events.emit(DOMAIN_EVENTS.FILE_UPLOADED, event);
     return record;
   }
+
+  /** Readable stream for a stored object (callers check access first). */
+  open(key: string) {
+    return this.storage.getStream(key);
+  }
 }

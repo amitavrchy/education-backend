@@ -1,15 +1,16 @@
-// ShikkhaAI — initial database foundation (Prisma ORM 7, PostgreSQL).
+// ShikkhaAI — database schema (Prisma ORM 7, PostgreSQL).
 //
-// Scope of this initial schema: identity, RBAC, user profiles, institution tenancy,
-// the national academic catalog, file metadata and audit logs.
-// Questions, examinations, submissions, study plans, notifications and subscriptions
-// are planned in docs/module-map.md and will be added module by module.
+// Two kinds of storage:
+// 1. Normalized security tables: users (credentials), user_sessions, otp_challenges, stored_files.
+// 2. A contract store for domain data: `records` holds every entity defined by the frontend's
+//    typed contracts (frontend/src/contracts) as JSONB, keyed by (collection, scope, id), and
+//    `documents` holds singleton objects (settings, gamification state, usage meters).
+//    The frontend contract is the source of truth for those shapes; business rules that must be
+//    server-side (scoring, XP, content workflow, billing, quotas, guardian visibility) live in
+//    dedicated services, not in the client. See docs/architecture.md.
 //
-// Conventions:
-// - UUID primary keys, snake_case table/column names via @@map/@map.
-// - createdAt/updatedAt on every mutable table; deletedAt for soft-deletable records.
-// - Tenant-owned rows carry an optional institutionId (null = platform/national scope).
-// - Large binaries never live in PostgreSQL: StoredFile holds metadata and a storage key.
+// Conventions: snake_case tables/columns via @@map/@map; createdAt/updatedAt everywhere.
+// Large binaries never live in PostgreSQL: StoredFile holds metadata and a storage key.
 
 generator client {
   provider            = "prisma-client"
@@ -26,103 +27,41 @@ datasource db {
 // Identity & access
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum UserStatus {
-  PENDING_VERIFICATION
-  ACTIVE
-  SUSPENDED
-  DEACTIVATED
-}
-
-/// Authentication identity. Role-specific data lives in the *Profile tables.
+/// Authentication identity. The public profile (UserAccount contract) lives in records
+/// (collection "users") with the same id; role/status/email/phone are kept in sync.
 model User {
-  id              String     @id @default(uuid()) @db.Uuid
-  /// Stored lowercased (normalized in the application layer).
-  email           String?    @unique @db.VarChar(254)
-  phone           String?    @unique @db.VarChar(20)
-  passwordHash    String?    @map("password_hash")
-  status          UserStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt DateTime?  @map("email_verified_at")
-  phoneVerifiedAt DateTime?  @map("phone_verified_at")
-  lastLoginAt     DateTime?  @map("last_login_at")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  deletedAt       DateTime?  @map("deleted_at")
+  /// Text id so seeded demo ids (e.g. "u-student-1") and generated ids share one format.
+  id            String    @id @db.VarChar(120)
+  /// Stored lowercased.
+  email         String?   @unique @db.VarChar(254)
+  /// Normalized local format (01XXXXXXXXX).
+  phone         String?   @unique @db.VarChar(20)
+  passwordHash  String?   @map("password_hash")
+  name          String    @db.VarChar(200)
+  /// One of the 10 platform roles (student, parent, teacher, content_reviewer, …).
+  role          String    @db.VarChar(40)
+  /// active | suspended | pending_deletion | invited
+  status        String    @default("active") @db.VarChar(30)
+  institutionId String?   @map("institution_id") @db.VarChar(120)
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
 
-  roles          UserRole[]
-  sessions       UserSession[]
-  studentProfile StudentProfile?
-  teacherProfile TeacherProfile?
-  parentProfile  ParentProfile?
-  uploadedFiles  StoredFile[]
-  auditLogs      AuditLog[]
+  sessions      UserSession[]
+  uploadedFiles StoredFile[]
 
-  @@index([status])
+  @@index([role])
+  @@index([institutionId])
   @@map("users")
 }
 
-/// Role catalogue: STUDENT, TEACHER, PARENT, INSTITUTION_ADMIN, SUPER_ADMIN.
-model Role {
-  id          String   @id @default(uuid()) @db.Uuid
-  key         String   @unique @db.VarChar(50)
-  name        String   @db.VarChar(100)
-  description String?
-  isSystem    Boolean  @default(true) @map("is_system")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  permissions RolePermission[]
-  users       UserRole[]
-
-  @@map("roles")
-}
-
-/// Fine-grained permission, e.g. "students:read:any", "exams:manage".
-model Permission {
-  id          String   @id @default(uuid()) @db.Uuid
-  key         String   @unique @db.VarChar(100)
-  description String?
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  roles RolePermission[]
-
-  @@map("permissions")
-}
-
-model RolePermission {
-  roleId       String @map("role_id") @db.Uuid
-  permissionId String @map("permission_id") @db.Uuid
-
-  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
-  @@index([permissionId])
-  @@map("role_permissions")
-}
-
-/// Role assignment, optionally scoped to one institution (multi-tenancy).
-/// A null institutionId means a platform-wide assignment (e.g. SUPER_ADMIN).
-model UserRole {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @map("user_id") @db.Uuid
-  roleId        String   @map("role_id") @db.Uuid
-  institutionId String?  @map("institution_id") @db.Uuid
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role        Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, roleId, institutionId])
-  @@index([institutionId])
-  @@map("user_roles")
-}
-
-/// Refresh-token session. Only a hash of the refresh token is stored.
+/// Refresh-token session. Only a SHA-256 hash of the refresh token is stored.
 model UserSession {
   id               String    @id @default(uuid()) @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  refreshTokenHash String    @map("refresh_token_hash")
+  userId           String    @map("user_id") @db.VarChar(120)
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  remember         Boolean   @default(false)
   userAgent        String?   @map("user_agent")
   ipAddress        String?   @map("ip_address") @db.VarChar(64)
   expiresAt        DateTime  @map("expires_at")
@@ -137,310 +76,59 @@ model UserSession {
   @@map("user_sessions")
 }
 
+/// One-time codes for login, registration, password reset and guardian linking.
+/// Only a hash of the code is stored; attempts are capped.
+model OtpChallenge {
+  id         String    @id @default(uuid()) @db.Uuid
+  /// login | register | reset | guardian_link
+  purpose    String    @db.VarChar(30)
+  target     String    @db.VarChar(254)
+  codeHash   String    @map("code_hash")
+  /// Purpose-specific data (pending registration, remember flag, link id).
+  payload    Json?
+  attempts   Int       @default(0)
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([target, purpose])
+  @@map("otp_challenges")
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Profiles
+// Contract store
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum Gender {
-  MALE
-  FEMALE
-  OTHER
-  UNDISCLOSED
-}
-
-enum ExamLevel {
-  JSC
-  SSC
-  HSC
-  ADMISSION
-}
-
-model StudentProfile {
-  id                String    @id @default(uuid()) @db.Uuid
-  userId            String    @unique @map("user_id") @db.Uuid
-  institutionId     String?   @map("institution_id") @db.Uuid
-  fullName          String    @map("full_name") @db.VarChar(150)
-  dateOfBirth       DateTime? @map("date_of_birth") @db.Date
-  gender            Gender?
-  level             ExamLevel
-  boardId           String?   @map("board_id") @db.Uuid
-  classId           String?   @map("class_id") @db.Uuid
-  groupId           String?   @map("group_id") @db.Uuid
-  rollNumber        String?   @map("roll_number") @db.VarChar(30)
-  /// Minors (< 18) need verified guardian consent before personal data processing.
-  isMinor           Boolean   @default(true) @map("is_minor")
-  guardianConsentAt DateTime? @map("guardian_consent_at")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  institution Institution?        @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  board       EducationBoard?     @relation(fields: [boardId], references: [id], onDelete: SetNull)
-  class       AcademicClass?      @relation(fields: [classId], references: [id], onDelete: SetNull)
-  group       Group?              @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  parentLinks ParentStudentLink[]
-
-  @@index([institutionId, classId])
-  @@map("student_profiles")
-}
-
-model TeacherProfile {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @unique @map("user_id") @db.Uuid
-  institutionId String?  @map("institution_id") @db.Uuid
-  fullName      String   @map("full_name") @db.VarChar(150)
-  designation   String?  @db.VarChar(100)
+/// One entity of a frontend contract type. `collection` is the frontend collection name
+/// (e.g. "questions", "examAttempts"); `scope` is "" for global collections or the owning
+/// student/user id for per-student ones. ownerId/institutionId are denormalized for access checks.
+model Record {
+  collection    String   @db.VarChar(80)
+  scope         String   @default("") @db.VarChar(120)
+  id            String   @db.VarChar(160)
+  data          Json
+  ownerId       String?  @map("owner_id") @db.VarChar(120)
+  institutionId String?  @map("institution_id") @db.VarChar(120)
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  institution Institution?        @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  assignments TeacherAssignment[]
-
-  @@index([institutionId])
-  @@map("teacher_profiles")
+  @@id([collection, scope, id])
+  @@index([collection, scope, updatedAt])
+  @@index([collection, ownerId])
+  @@index([collection, institutionId])
+  @@map("records")
 }
 
-model ParentProfile {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @unique @map("user_id") @db.Uuid
-  fullName  String   @map("full_name") @db.VarChar(150)
+/// Singleton objects keyed by name, e.g. "systemConfig", "gamification:u-student-1".
+model Document {
+  key       String   @id @db.VarChar(200)
+  ownerId   String?  @map("owner_id") @db.VarChar(120)
+  data      Json
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  children ParentStudentLink[]
-
-  @@map("parent_profiles")
-}
-
-/// A parent can only see a student after the link is verified.
-model ParentStudentLink {
-  id           String    @id @default(uuid()) @db.Uuid
-  parentId     String    @map("parent_id") @db.Uuid
-  studentId    String    @map("student_id") @db.Uuid
-  relationship String    @db.VarChar(30)
-  verifiedAt   DateTime? @map("verified_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-
-  parent  ParentProfile  @relation(fields: [parentId], references: [id], onDelete: Cascade)
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([parentId, studentId])
-  @@index([studentId])
-  @@map("parent_student_links")
-}
-
-/// Which classes/subjects a teacher may access within an institution.
-model TeacherAssignment {
-  id             String   @id @default(uuid()) @db.Uuid
-  teacherId      String   @map("teacher_id") @db.Uuid
-  institutionId  String   @map("institution_id") @db.Uuid
-  classId        String   @map("class_id") @db.Uuid
-  groupId        String?  @map("group_id") @db.Uuid
-  subjectId      String?  @map("subject_id") @db.Uuid
-  academicYearId String?  @map("academic_year_id") @db.Uuid
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  teacher      TeacherProfile @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  institution  Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  class        AcademicClass  @relation(fields: [classId], references: [id], onDelete: Cascade)
-  group        Group?         @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  subject      Subject?       @relation(fields: [subjectId], references: [id], onDelete: SetNull)
-  academicYear AcademicYear?  @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
-
-  @@unique([teacherId, classId, groupId, subjectId, academicYearId])
-  @@index([institutionId, classId])
-  @@map("teacher_assignments")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Institutions (tenants)
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum InstitutionType {
-  SCHOOL
-  COLLEGE
-  SCHOOL_AND_COLLEGE
-  MADRASAH
-  COACHING_CENTER
-}
-
-enum InstitutionStatus {
-  PENDING
-  ACTIVE
-  SUSPENDED
-}
-
-model Institution {
-  id        String            @id @default(uuid()) @db.Uuid
-  name      String            @db.VarChar(200)
-  slug      String            @unique @db.VarChar(120)
-  type      InstitutionType
-  /// Educational Institution Identification Number issued by BANBEIS.
-  eiin      String?           @unique @db.VarChar(20)
-  boardId   String?           @map("board_id") @db.Uuid
-  district  String?           @db.VarChar(60)
-  address   String?
-  status    InstitutionStatus @default(PENDING)
-  createdAt DateTime          @default(now()) @map("created_at")
-  updatedAt DateTime          @updatedAt @map("updated_at")
-  deletedAt DateTime?         @map("deleted_at")
-
-  board              EducationBoard?     @relation(fields: [boardId], references: [id], onDelete: SetNull)
-  userRoles          UserRole[]
-  students           StudentProfile[]
-  teachers           TeacherProfile[]
-  teacherAssignments TeacherAssignment[]
-  academicYears      AcademicYear[]
-  files              StoredFile[]
-
-  @@index([status])
-  @@map("institutions")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Academic catalog
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// e.g. 2026. institutionId null = national academic year.
-model AcademicYear {
-  id            String   @id @default(uuid()) @db.Uuid
-  institutionId String?  @map("institution_id") @db.Uuid
-  name          String   @db.VarChar(20)
-  startDate     DateTime @map("start_date") @db.Date
-  endDate       DateTime @map("end_date") @db.Date
-  isCurrent     Boolean  @default(false) @map("is_current")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  institution        Institution?        @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  teacherAssignments TeacherAssignment[]
-
-  @@unique([institutionId, name])
-  @@map("academic_years")
-}
-
-/// Dhaka, Rajshahi, Chattogram, … , Madrasah, Technical.
-model EducationBoard {
-  id        String   @id @default(uuid()) @db.Uuid
-  code      String   @unique @db.VarChar(30)
-  name      String   @db.VarChar(100)
-  nameBn    String?  @map("name_bn") @db.VarChar(100)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  institutions Institution[]
-  students     StudentProfile[]
-
-  @@map("education_boards")
-}
-
-/// Class 9, Class 10, HSC 1st year, HSC 2nd year…
-model AcademicClass {
-  id        String    @id @default(uuid()) @db.Uuid
-  code      String    @unique @db.VarChar(30)
-  name      String    @db.VarChar(60)
-  nameBn    String?   @map("name_bn") @db.VarChar(60)
-  level     ExamLevel
-  sortOrder Int       @default(0) @map("sort_order")
-  createdAt DateTime  @default(now()) @map("created_at")
-
-  subjects           Subject[]
-  students           StudentProfile[]
-  teacherAssignments TeacherAssignment[]
-
-  @@map("classes")
-}
-
-/// Science, Humanities, Business Studies.
-model Group {
-  id        String   @id @default(uuid()) @db.Uuid
-  code      String   @unique @db.VarChar(30)
-  name      String   @db.VarChar(60)
-  nameBn    String?  @map("name_bn") @db.VarChar(60)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  subjects           Subject[]
-  students           StudentProfile[]
-  teacherAssignments TeacherAssignment[]
-
-  @@map("groups")
-}
-
-model Subject {
-  id        String   @id @default(uuid()) @db.Uuid
-  /// NCTB/board subject code, e.g. "136" (Physics).
-  code      String   @db.VarChar(20)
-  name      String   @db.VarChar(120)
-  nameBn    String?  @map("name_bn") @db.VarChar(120)
-  classId   String   @map("class_id") @db.Uuid
-  groupId   String?  @map("group_id") @db.Uuid
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  class              AcademicClass       @relation(fields: [classId], references: [id], onDelete: Cascade)
-  group              Group?              @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  books              Book[]
-  teacherAssignments TeacherAssignment[]
-
-  @@unique([classId, code])
-  @@index([groupId])
-  @@map("subjects")
-}
-
-model Book {
-  id           String   @id @default(uuid()) @db.Uuid
-  subjectId    String   @map("subject_id") @db.Uuid
-  title        String   @db.VarChar(200)
-  titleBn      String?  @map("title_bn") @db.VarChar(200)
-  edition      String?  @db.VarChar(30)
-  publisher    String?  @db.VarChar(120)
-  /// The source PDF, stored in object storage.
-  sourceFileId String?  @unique @map("source_file_id") @db.Uuid
-  isPublished  Boolean  @default(false) @map("is_published")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  subject    Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  sourceFile StoredFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
-  chapters   Chapter[]
-
-  @@index([subjectId])
-  @@map("books")
-}
-
-model Chapter {
-  id        String   @id @default(uuid()) @db.Uuid
-  bookId    String   @map("book_id") @db.Uuid
-  number    Int
-  title     String   @db.VarChar(200)
-  titleBn   String?  @map("title_bn") @db.VarChar(200)
-  pageStart Int?     @map("page_start")
-  pageEnd   Int?     @map("page_end")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  book   Book    @relation(fields: [bookId], references: [id], onDelete: Cascade)
-  topics Topic[]
-
-  @@unique([bookId, number])
-  @@map("chapters")
-}
-
-model Topic {
-  id        String   @id @default(uuid()) @db.Uuid
-  chapterId String   @map("chapter_id") @db.Uuid
-  title     String   @db.VarChar(200)
-  titleBn   String?  @map("title_bn") @db.VarChar(200)
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-
-  @@index([chapterId, sortOrder])
-  @@map("topics")
+  @@index([ownerId])
+  @@map("documents")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -486,43 +174,16 @@ model StoredFile {
   processingStatus ProcessingStatus @default(NOT_REQUIRED) @map("processing_status")
   processingError  String?          @map("processing_error")
   pageCount        Int?             @map("page_count")
-  uploadedById     String?          @map("uploaded_by_id") @db.Uuid
-  institutionId    String?          @map("institution_id") @db.Uuid
+  uploadedById     String?          @map("uploaded_by_id") @db.VarChar(120)
+  institutionId    String?          @map("institution_id") @db.VarChar(120)
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
   deletedAt        DateTime?        @map("deleted_at")
 
-  uploadedBy  User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  book        Book?
+  uploadedBy User? @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
   @@unique([bucket, key])
   @@index([institutionId, category])
   @@index([processingStatus])
   @@map("stored_files")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Audit
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Append-only trail of security-relevant actions (sign-ins, role changes, data access).
-model AuditLog {
-  id            String   @id @default(uuid()) @db.Uuid
-  actorId       String?  @map("actor_id") @db.Uuid
-  action        String   @db.VarChar(100)
-  resourceType  String?  @map("resource_type") @db.VarChar(60)
-  resourceId    String?  @map("resource_id") @db.VarChar(64)
-  institutionId String?  @map("institution_id") @db.Uuid
-  ipAddress     String?  @map("ip_address") @db.VarChar(64)
-  userAgent     String?  @map("user_agent")
-  metadata      Json?
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-
-  @@index([actorId, createdAt])
-  @@index([resourceType, resourceId])
-  @@index([institutionId, createdAt])
-  @@map("audit_logs")
 }

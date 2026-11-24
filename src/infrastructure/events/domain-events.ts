@@ -9,6 +9,7 @@ export const DOMAIN_EVENTS = {
   DOCUMENT_PROCESSED: 'document.processed',
   EXAM_SUBMITTED: 'exam.submitted',
   ANSWER_EVALUATED: 'answer.evaluated',
+  INGESTION_REQUESTED: 'ingestion.requested',
 } as const;
 
 export interface FileUploadedEvent {

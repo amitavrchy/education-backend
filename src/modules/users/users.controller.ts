@@ -13,7 +13,7 @@ export class UsersController {
 
   /** The signed-in user's own account. Requires only a valid token. */
   @Get('me')
-  @ApiOkResponse({ description: 'Own account with roles and profiles' })
+  @ApiOkResponse({ description: 'Own UserAccount record' })
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.usersService.getOwnProfile(user.id);
   }

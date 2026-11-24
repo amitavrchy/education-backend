@@ -21,7 +21,7 @@ Error:
 {
   "success": false,
   "statusCode": 400,
-  "code": "VALIDATION_FAILED",
+  "code": "VALIDATION",
   "message": "Validation failed",
   "errors": { "password": ["password must be longer than or equal to 8 characters"] },
   "path": "/api/v1/auth/register",
@@ -37,7 +37,7 @@ Every response carries an `x-request-id` header (the incoming value is reused if
 | Code | When |
 | --- | --- |
 | 200 / 201 / 204 | OK / created / no content |
-| 400 `VALIDATION_FAILED` | DTO validation failed (field errors in `errors`) |
+| 400 `VALIDATION` | DTO validation failed (field errors in `errors`) |
 | 401 `UNAUTHORIZED` | Missing, invalid or expired token |
 | 403 `FORBIDDEN` | Missing role or permission |
 | 404 `NOT_FOUND` | Not found, or not yours (ownership denials look the same) |
@@ -49,24 +49,28 @@ Every response carries an `x-request-id` header (the incoming value is reused if
 
 ## Routes
 
-Status: ✅ implemented · 🟡 contract only (answers 501) · ⬜ planned
+Every route the frontend uses is implemented. The complete mapping (generic collections + composite operations)
+is in [`frontend-integration.md`](frontend-integration.md); Swagger lists every route.
 
-| Prefix | Module | Status |
-| --- | --- | --- |
-| `GET /health`, `GET /health/ready` | health | ✅ |
-| `POST /auth/login`, `/auth/register`, `/auth/refresh`, `/auth/logout` | auth | 🟡 |
-| `GET /users/me` | users | ✅ (needs a token) |
-| `POST /ai/tutor/ask` | ai-tutor | ✅ wiring (503 until an AI provider is set; `mock` works offline) |
-| `/students` | students | ⬜ |
-| `/teachers` | teachers | ⬜ |
-| `/parents` | parents | ⬜ |
-| `/institutions` | institutions | ⬜ |
-| `/books`, `/chapters`, `/topics`, `/subjects`, `/classes`, `/groups` | academic catalog | ⬜ |
-| `/questions`, `/board-questions` | question-bank, board-questions | ⬜ |
-| `/exams`, `/exams/:examId/submissions` | examinations, submissions | ⬜ |
-| `/ai/...` (question generation, evaluation) | ai modules | ⬜ |
-| `/analytics` | analytics | ⬜ |
-| `/admin` | admin | ⬜ |
+| Prefix | Module |
+| --- | --- |
+| `/health` | health |
+| `/auth/*`, `/users/me` | auth, users |
+| `/:collection[/:studentId][/:id]` (≈80 collections) | records (generic contract store) |
+| `/documents/:key` | records |
+| `/progress/:studentId/*` | progress |
+| `/exams/*`, `/exam-attempts/:studentId/:id/*` | exams |
+| `/tutor/:studentId/*`, `/kb/query`, `/ai/tutor/ask` | ai-tutor |
+| `/review-items/*` | review |
+| `/billing/*`, `/usage/:userId` | billing |
+| `/guardian/*` | guardian |
+| `/notifications/read-all`, `/notifications/broadcast` | notifications |
+| `/ingestion-jobs/*`, `/uploads` | document-processing, uploads |
+| `/session-records`, `/analytics/*` | admin |
+| `/search` | search |
+
+Domain errors use the frontend's codes as both `code` and `message` (`OTP_INVALID`, `COUPON_INVALID`,
+`QUOTA_EXCEEDED`, `INVALID_TRANSITION`, …) with HTTP 422 (429 for quotas/rate limits).
 
 ## Conventions for new endpoints
 
@@ -79,6 +83,7 @@ Status: ✅ implemented · 🟡 contract only (answers 501) · ⬜ planned
 ## Trying protected routes locally
 
 ```bash
-npm run dev:token -- STUDENT          # prints a 1-hour Bearer token (refuses in production)
+npm run dev:token -- student u-student-1 inst-1   # prints a 1-hour Bearer token (refuses in production)
+# or sign in for real: curl -X POST localhost:4000/api/v1/auth/login -d '{"identifier":"student@shikkha.ai","password":"…"}'
 curl -H "Authorization: Bearer <token>" http://localhost:4000/api/v1/users/me
 ```

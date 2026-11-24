@@ -21,12 +21,12 @@ export const envSchema = z
     PORT: z.coerce.number().int().positive().default(4000),
     API_PREFIX: z.string().default('api'),
     API_VERSION: z.string().default('1'),
-    FRONTEND_URL: z.url().default('http://localhost:3000'),
-    CORS_ORIGINS: csv.default(['http://localhost:3000']),
+    FRONTEND_URL: z.url().default('http://localhost:3001'),
+    CORS_ORIGINS: csv.default(['http://localhost:3001', 'http://localhost:3000']),
     TRUST_PROXY: booleanString.default(false),
     SWAGGER_ENABLED: booleanString.default(true),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-    BODY_SIZE_LIMIT: z.string().default('1mb'),
+    BODY_SIZE_LIMIT: z.string().default('5mb'),
 
     // Rate limiting
     THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
@@ -50,6 +50,15 @@ export const envSchema = z
     JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
     JWT_ISSUER: z.string().default('shikkhaai-api'),
     JWT_AUDIENCE: z.string().default('shikkhaai-clients'),
+    /** Refresh-session lifetime when "remember me" is not ticked. */
+    SESSION_TTL_HOURS: z.coerce.number().positive().default(12),
+
+    // Demo mode (never in production): fixed OTP 123456, demo accounts accept any password
+    // except "wrongpass", and the role switcher works — exactly what the frontend's demo UI expects.
+    AUTH_DEMO_MODE: booleanString.default(false),
+    SEED_DEMO_PASSWORD: z.string().min(8).default('demo-password-123'),
+    OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+    OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
 
     // File storage
     STORAGE_PROVIDER: z.enum(['local', 's3']).default('local'),
@@ -69,9 +78,23 @@ export const envSchema = z
     EMAIL_PROVIDER: z.enum(['console', 'none']).default('console'),
     EMAIL_FROM: z.string().default('ShikkhaAI <no-reply@shikkha.ai>'),
     SMS_PROVIDER: z.enum(['console', 'none']).default('console'),
-    PAYMENT_PROVIDER: z.enum(['none']).default('none'),
+    PAYMENT_PROVIDER: z.enum(['none', 'mock']).default('none'),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production' && env.AUTH_DEMO_MODE) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_DEMO_MODE'],
+        message: 'AUTH_DEMO_MODE must be false in production',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.PAYMENT_PROVIDER === 'mock') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYMENT_PROVIDER'],
+        message: 'PAYMENT_PROVIDER=mock is not allowed in production',
+      });
+    }
     if (env.NODE_ENV === 'production' && env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
       ctx.addIssue({
         code: 'custom',

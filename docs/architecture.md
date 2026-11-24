@@ -51,8 +51,12 @@ HTTP request
      no `submissions:read:any` permission.
    - Denials surface as 404, so callers can't probe which records exist.
 
-Implemented now: the guards, decorators, permission matrix, access policy (unit-tested), password hasher and token service.
-Not implemented yet: the login, registration, refresh, logout and OTP flows (the endpoints answer 501).
+Roles and permissions mirror the frontend (10 roles, `src/common/auth/permissions.ts`). The effective matrix is the
+admin-editable `permissionMatrix` document, resolved per request; `@RequirePermissions` uses any-of semantics like
+the frontend's `hasPermission()`. Record-level access is `AccessPolicyService` (student/guardian/institution/staff
+by data *area*) plus per-collection rules in `src/modules/records/resource-registry.ts`.
+Auth flows (password, OTP login, OTP registration, reset, refresh rotation, logout) are implemented; see
+`docs/frontend-integration.md`.
 
 ## Multi-tenancy
 
@@ -64,7 +68,16 @@ A future step can add PostgreSQL row-level security as defence in depth.
 ## Data
 
 - PostgreSQL via Prisma 7 (driver adapter `@prisma/adapter-pg`, generated client in `src/generated/prisma`).
-- UUID keys, snake_case tables, timestamps everywhere, and soft delete (`deletedAt`) for users, institutions and files.
+- Security data is normalized: `users` (credentials), `user_sessions`, `otp_challenges`, `stored_files`.
+- Domain data is a **contract store**: `records(collection, scope, id, data jsonb, owner_id, institution_id)` holds every
+  entity of the frontend's typed contracts (`src/contracts`, mirrored from the frontend), `documents` holds
+  singletons. `RecordStoreService` implements filtering/search/sort/pagination in SQL over JSONB (GIN index).
+  Rules that must be server-side live in dedicated services: exam scoring & timing (`exams`), XP/mastery/streaks/
+  badges/missions (`progress`), content workflow (`review`), prices/coupons/refunds (`billing`), quotas (`usage`),
+  guardian visibility (`guardian`, `access`), tutor generation (`ai-tutor`). Generic writes to server-owned
+  collections (attempts, mastery, examAttempts, gamification…) are refused.
+- Every staff write to an audited collection is appended to `auditLogs` (no update/delete path).
+- snake_case tables, timestamps everywhere; text ids so seeded demo ids (`u-student-1`) and generated ids coexist.
 - Binaries never go into PostgreSQL: `stored_files` keeps the storage key, MIME type, size, checksum and processing status.
 
 ## Background jobs

@@ -1,16 +1,16 @@
 /**
- * Development helper: signs an access token for a role, to try protected endpoints
- * before the login flow exists. Refuses to run with NODE_ENV=production.
+ * Development helper: signs a 1-hour access token, to try protected endpoints with curl.
+ * Refuses to run with NODE_ENV=production. Prefer the real login (POST /auth/login).
  *
- *   npm run dev:token -- SUPER_ADMIN
- *   npm run dev:token -- STUDENT <userId>
+ *   npm run dev:token -- super_admin u-sadmin-1
+ *   npm run dev:token -- student u-student-1 inst-1
  */
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
-import { DEFAULT_ROLE_PERMISSIONS } from '../src/common/constants/role-permissions.js';
-import { RoleKey } from '../src/common/enums/role.enum.js';
+import type { JwtAccessPayload } from '../src/common/interfaces/authenticated-user.interface.js';
 import { envSchema } from '../src/config/configuration.js';
+import { USER_ROLES, type UserRole } from '../src/contracts/user.js';
 
 const env = envSchema.parse(process.env);
 if (env.NODE_ENV === 'production') {
@@ -18,26 +18,19 @@ if (env.NODE_ENV === 'production') {
   process.exit(1);
 }
 
-const role = (process.argv[2] ?? 'STUDENT') as RoleKey;
-if (!Object.values(RoleKey).includes(role)) {
-  console.error(`Unknown role "${role}". Use one of: ${Object.values(RoleKey).join(', ')}`);
+const role = (process.argv[2] ?? 'student') as UserRole;
+if (!USER_ROLES.includes(role)) {
+  console.error(`Unknown role "${role}". Use one of: ${USER_ROLES.join(', ')}`);
   process.exit(1);
 }
 const userId = process.argv[3] ?? randomUUID();
+const payload: JwtAccessPayload = { sub: userId, role, institutionId: process.argv[4] ?? null };
 
-const token = await new JwtService().signAsync(
-  {
-    sub: userId,
-    roles: [role],
-    permissions: [...DEFAULT_ROLE_PERMISSIONS[role]],
-    institutionId: null,
-  },
-  {
-    secret: env.JWT_ACCESS_SECRET,
-    expiresIn: '1h',
-    issuer: env.JWT_ISSUER,
-    audience: env.JWT_AUDIENCE,
-  },
-);
+const token = await new JwtService().signAsync(payload, {
+  secret: env.JWT_ACCESS_SECRET,
+  expiresIn: '1h',
+  issuer: env.JWT_ISSUER,
+  audience: env.JWT_AUDIENCE,
+});
 
 console.log(`Role: ${role}\nUser: ${userId}\n\nAuthorization: Bearer ${token}`);

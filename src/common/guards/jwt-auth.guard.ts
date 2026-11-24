@@ -8,6 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { jwtConfig, type JwtConfig } from '../../config/index.js';
+import { PermissionMatrixService } from '../../modules/access/permission-matrix.service.js';
 import { IS_PUBLIC_KEY } from '../constants/metadata-keys.js';
 import type {
   JwtAccessPayload,
@@ -16,13 +17,16 @@ import type {
 
 /**
  * Global guard: every route needs a valid Bearer access token unless marked @Public().
- * Verifies signature, expiry, issuer and audience, then attaches request.user.
+ * Verifies signature, expiry, issuer and audience, resolves the caller's permissions from the
+ * current matrix and attaches request.user. On public routes a valid token is attached too;
+ * an invalid one is ignored.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly jwt: JwtService,
+    private readonly matrix: PermissionMatrixService,
     @Inject(jwtConfig.KEY) private readonly config: JwtConfig,
   ) {}
 
@@ -31,11 +35,13 @@ export class JwtAuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic) return true;
-
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const token = this.extractBearerToken(request);
-    if (!token) throw new UnauthorizedException('Missing access token');
+
+    if (!token) {
+      if (isPublic) return true;
+      throw new UnauthorizedException('Missing access token');
+    }
 
     let payload: JwtAccessPayload;
     try {
@@ -45,15 +51,17 @@ export class JwtAuthGuard implements CanActivate {
         audience: this.config.audience,
       });
     } catch {
+      if (isPublic) return true;
       throw new UnauthorizedException('Invalid or expired access token');
     }
 
     request.user = {
       id: payload.sub,
-      roles: payload.roles ?? [],
-      permissions: payload.permissions ?? [],
+      role: payload.role,
+      permissions: await this.matrix.permissionsFor(payload.role),
       institutionId: payload.institutionId ?? null,
       sessionId: payload.sid,
+      ip: request.ip,
     };
     return true;
   }
