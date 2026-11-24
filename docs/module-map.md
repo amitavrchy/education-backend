@@ -1,89 +1,29 @@
 # Module Map
 
-Status: ✅ foundation implemented · 🧩 service boundary/interfaces only · ⬜ skeleton (module + empty service)
+| Module | Owns / does |
+| --- | --- |
+| access | Permission matrix (admin-editable) and `AccessPolicyService` (student data by area) |
+| auth | Password/OTP login, OTP registration, reset, refresh rotation, logout, demo role switch |
+| users | `GET /users/me` |
+| records | Contract store (`records`, `documents`), generic REST adapter for ~80 frontend collections, resource registry with access rules and hooks |
+| audit-logs | Append-only audit trail (frontend `AuditLog` shape) |
+| notifications | In-app notifications (per user, portal fan-out), email queue |
+| progress | Attempts → mastery → chapter progress → activity/XP/streak/badges/missions |
+| exams | Attempt lifecycle, server timing and scoring, sanitized questions |
+| review | Content workflow state machine, comments, suggestions, teacher question authoring |
+| billing | Checkout (mock gateway), coupons, subscriptions, refunds; usage quotas |
+| guardian | Link codes, OTP-confirmed linking, permission-filtered child summaries, replies to teachers |
+| ai-tutor | Grounded tutor (retrieval + local engine or AI provider), SSE streaming, KB query simulator |
+| document-processing | Book ingestion pipeline on the `pdf-processing` queue (text sources → KB passages) |
+| uploads | File upload/download with signature checks and access control |
+| search | Global search across content and the caller's own study material |
+| admin | Live session records, analytics series and overview |
+| ai-knowledge, answer-evaluation, question-generation | AI interfaces kept for vendor adapters |
 
-## Identity and access
-
-| Module | Status | Owns | Notes |
-| --- | --- | --- | --- |
-| auth | 🧩 | sessions, tokens | Guards, password hasher, token service and DTOs are done; flows answer 501 |
-| users | ✅ | `users` | `GET /users/me` |
-| roles | ✅ | `roles`, `user_roles` | `getEffectiveAccess(userId)` |
-| permissions | ✅ | `permissions`, `role_permissions` | `AccessPolicyService` (ownership and tenancy), unit-tested |
-| audit-logs | ✅ | `audit_logs` | `record()` (best effort, append-only) |
-
-## People and tenants
-
-| Module | Status | Owns |
-| --- | --- | --- |
-| students | ⬜ | `student_profiles` (guardian consent for minors) |
-| teachers | ⬜ | `teacher_profiles`, `teacher_assignments` |
-| parents | ⬜ | `parent_profiles`, `parent_student_links` |
-| institutions | ⬜ | `institutions` |
-| admin | ⬜ | platform operations |
-
-## Academic catalog
-
-| Module | Status | Owns |
-| --- | --- | --- |
-| academic-years | ⬜ | `academic_years` |
-| education-boards | ⬜ | `education_boards` (seeded) |
-| classes | ⬜ | `classes` (seeded) |
-| groups | ⬜ | `groups` (seeded) |
-| subjects | ⬜ | `subjects` |
-| books | ⬜ | `books` |
-| chapters | ⬜ | `chapters` |
-| topics | ⬜ | `topics` |
-
-## Assessment (tables to be added)
-
-| Module | Status | Planned tables |
-| --- | --- | --- |
-| question-bank | ⬜ | `questions`, `question_options`, `question_tags` |
-| board-questions | ⬜ | `board_question_papers` |
-| examinations | ⬜ | `examinations`, `examination_questions` |
-| submissions | ⬜ | `exam_submissions`, `answers` (private: `ACCESS_RULES.examSubmission`) |
-| assignments | ⬜ | `assignments`, `assignment_submissions` |
-| answer-evaluation | 🧩 | `answer_evaluations`; queue `ai-answer-evaluation` |
-| question-generation | 🧩 | `generation_requests`; queue `question-generation` |
-
-## AI and content processing
-
-| Module | Status | Notes |
-| --- | --- | --- |
-| ai-tutor | 🧩 | `AiChatService`, `RagService`, `POST /ai/tutor/ask` |
-| ai-knowledge | 🧩 | `VectorStore` (noop for now), `KnowledgeRetrievalService`, `chunkText()` |
-| document-processing | 🧩 | queue `pdf-processing`, `PdfProcessingProcessor` (acknowledges jobs only), pipeline interfaces |
-| uploads | ✅ | `UploadsService.store()` → storage + `stored_files` |
-
-## Learning and engagement
-
-| Module | Status | Planned tables |
-| --- | --- | --- |
-| study-plans | ⬜ | `study_plans`, `learning_progress` |
-| notes | ⬜ | `notes` |
-| videos | ⬜ | `videos`, `video_progress` |
-| practical-lab | ⬜ | `experiments` |
-| analytics | ⬜ | aggregates (`ACCESS_RULES.learningAnalytics`) |
-| community | ⬜ | `posts`, `comments` |
-| career-guidance | ⬜ | `career_paths` |
-| scholarships | ⬜ | `scholarships` |
-| notices | ⬜ | `notices` |
-| live-classes | ⬜ | `live_classes` |
-| moderation | ⬜ | `moderation_reports` |
-
-## Communication and billing
-
-| Module | Status | Notes |
-| --- | --- | --- |
-| notifications | 🧩 | queue `email-notifications` + processor; planned `notifications` table |
-| subscriptions | ⬜ | `plans`, `subscriptions`, AI usage quotas |
-| payments | ⬜ | `payments`; adapters for bKash, Nagad and SSLCommerz |
-| reports | ⬜ | queue `report-generation` |
+`src/domain/*` holds pure rules ported from the frontend (grading, scoring, progress rules, content workflow, tutor engine).
 
 ## Dependency rules
 
-- `modules/*` may depend on `common`, `config`, `database`, `infrastructure` and `integrations` (through tokens).
-- Modules talk to each other through exported services or domain events, never through another module's Prisma tables.
-- `integrations/*` never imports `modules/*`.
-- Global modules: Prisma, Redis, Queues, Storage, Integrations, Permissions (`AccessPolicyService`) and AuditLogs.
+- `modules/*` may depend on `common`, `config`, `database`, `infrastructure`, `integrations` and `domain`.
+- Domain modules use `RecordStoreService` for contract data; access rules live in the resource registry.
+- `RecordsModule` is imported last in `DomainModule` (its routes are a catch-all).

@@ -26,6 +26,12 @@ export const integrationsConfig = registerAs('integrations', () => {
     email: { provider: env.EMAIL_PROVIDER, from: env.EMAIL_FROM },
     sms: { provider: env.SMS_PROVIDER },
     payment: { provider: env.PAYMENT_PROVIDER },
+    auth: {
+      demoMode: env.AUTH_DEMO_MODE && env.NODE_ENV !== 'production',
+      seedDemoPassword: env.SEED_DEMO_PASSWORD,
+      otpTtlMinutes: env.OTP_TTL_MINUTES,
+      otpMaxAttempts: env.OTP_MAX_ATTEMPTS,
+    },
   };
 });
 

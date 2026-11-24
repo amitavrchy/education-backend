@@ -43,8 +43,9 @@ import { DomainModule } from './modules/domain.module.js';
     IntegrationsModule,
     AuthModule,
     RateLimitModule,
-    DomainModule,
+    // Before DomainModule: its generic /:resource routes are a catch-all.
     HealthModule,
+    DomainModule,
   ],
 })
 export class AppModule {}

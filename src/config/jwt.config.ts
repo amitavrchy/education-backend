@@ -10,6 +10,7 @@ export const jwtConfig = registerAs('jwt', () => {
     refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN,
     issuer: env.JWT_ISSUER,
     audience: env.JWT_AUDIENCE,
+    sessionTtlHours: env.SESSION_TTL_HOURS,
   };
 });
 

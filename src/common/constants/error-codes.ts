@@ -1,6 +1,10 @@
-/** Machine-readable error codes returned in every error body (`code`). */
+/**
+ * Machine-readable error codes returned in every error body (`code`).
+ * Generic codes match the frontend's `errorText()` (VALIDATION, NOT_FOUND, FORBIDDEN …);
+ * domain services also throw domain codes (OTP_INVALID, COUPON_INVALID, QUOTA_EXCEEDED …).
+ */
 export const ERROR_CODES = {
-  VALIDATION_FAILED: 'VALIDATION_FAILED',
+  VALIDATION: 'VALIDATION',
   BAD_REQUEST: 'BAD_REQUEST',
   UNAUTHORIZED: 'UNAUTHORIZED',
   FORBIDDEN: 'FORBIDDEN',

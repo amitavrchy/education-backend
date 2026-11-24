@@ -25,7 +25,7 @@ docker compose ps               # wait until both are "healthy"
 # 3. Dependencies, database
 npm install                     # also runs `prisma generate`
 npm run db:migrate              # creates and applies migrations (first run: name it "init")
-npm run db:seed                 # roles, permissions, boards, classes, groups
+npm run db:seed:reset           # the frontend demo data (see docs/frontend-integration.md)
 
 # 4. Run
 npm run start:dev               # http://localhost:4000/api/v1

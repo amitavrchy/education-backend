@@ -1,9 +1,22 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { jwtConfig, type JwtConfig } from '../../../config/index.js';
 import type { JwtAccessPayload } from '../../../common/interfaces/authenticated-user.interface.js';
+import { jwtConfig, type JwtConfig } from '../../../config/index.js';
 import type { TokenSubject } from '../interfaces/auth.interfaces.js';
+
+/** "15m" | "30d" | "12h" | "3600" → milliseconds. */
+export function durationMs(value: string): number {
+  const m = /^(\d+)\s*([smhd]?)$/.exec(value.trim());
+  if (!m) throw new Error(`Invalid duration: ${value}`);
+  const n = Number(m[1]);
+  return (
+    n *
+    ({ '': 1000, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const)[
+      m[2] as '' | 's' | 'm' | 'h' | 'd'
+    ]
+  );
+}
 
 /**
  * Issues access tokens (short-lived JWT) and opaque refresh tokens.
@@ -20,8 +33,7 @@ export class TokenService {
   signAccessToken(subject: TokenSubject): Promise<string> {
     const payload: JwtAccessPayload = {
       sub: subject.userId,
-      roles: subject.roles,
-      permissions: subject.permissions,
+      role: subject.role,
       institutionId: subject.institutionId,
       sid: subject.sessionId,
     };
@@ -33,12 +45,22 @@ export class TokenService {
     });
   }
 
-  generateRefreshToken(): { token: string; hash: string } {
-    const token = randomBytes(48).toString('base64url');
-    return { token, hash: this.hashRefreshToken(token) };
+  accessTtlMs(): number {
+    return durationMs(this.config.accessExpiresIn);
   }
 
-  hashRefreshToken(token: string): string {
+  sessionTtlMs(remember: boolean): number {
+    return remember
+      ? durationMs(this.config.refreshExpiresIn)
+      : this.config.sessionTtlHours * 3_600_000;
+  }
+
+  generateRefreshToken(): { token: string; hash: string } {
+    const token = randomBytes(48).toString('base64url');
+    return { token, hash: TokenService.hash(token) };
+  }
+
+  static hash(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }
 }

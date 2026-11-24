@@ -10,7 +10,7 @@ export default defineConfig([
   {
     languageOptions: {
       parserOptions: {
-        projectService: { allowDefaultProject: ['eslint.config.mjs'] },
+        projectService: { allowDefaultProject: ['eslint.config.mjs', 'scripts/*.mjs'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -30,6 +30,17 @@ export default defineConfig([
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/unbound-method': 'off',
+    },
+  },
+  {
+    // Dev tool that executes the frontend's (untyped, dynamically imported) mock repositories.
+    files: ['scripts/export-frontend-seed.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
     },
   },
 ]);
