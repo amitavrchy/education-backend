@@ -71,7 +71,11 @@ export const envSchema = z
     UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().positive().default(25),
 
     // Integrations (all optional; "none"/"console" keeps them disabled)
-    AI_PROVIDER: z.enum(['none', 'mock']).default('none'),
+    // service = the ShikkhaAI AI service (../ai, FastAPI + Claude) at AI_SERVICE_URL.
+    AI_PROVIDER: z.enum(['none', 'mock', 'service']).default('none'),
+    AI_SERVICE_URL: z.url().default('http://localhost:8100'),
+    AI_SERVICE_KEY: z.string().optional(),
+    AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     AI_API_KEY: z.string().optional(),
     AI_CHAT_MODEL: z.string().optional(),
     AI_EMBEDDING_MODEL: z.string().optional(),
@@ -81,6 +85,13 @@ export const envSchema = z
     PAYMENT_PROVIDER: z.enum(['none', 'mock']).default('none'),
   })
   .superRefine((env, ctx) => {
+    if (env.AI_PROVIDER === 'service' && (!env.AI_SERVICE_KEY || env.AI_SERVICE_KEY.length < 32)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_SERVICE_KEY'],
+        message: 'AI_SERVICE_KEY (32+ chars) is required when AI_PROVIDER=service',
+      });
+    }
     if (env.NODE_ENV === 'production' && env.AUTH_DEMO_MODE) {
       ctx.addIssue({
         code: 'custom',

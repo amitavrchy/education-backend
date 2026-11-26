@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiProvidersModule } from './ai-providers/ai-providers.module.js';
+import { AiServiceModule } from './ai-service/ai-service.module.js';
 import { EmailModule } from './email/email.module.js';
 import { OcrServicesModule } from './ocr-services/ocr-services.module.js';
 import { PaymentProvidersModule } from './payment-providers/payment-providers.module.js';
@@ -10,6 +11,7 @@ import { SpeechServicesModule } from './speech-services/speech-services.module.j
 @Module({
   imports: [
     AiProvidersModule,
+    AiServiceModule,
     SpeechServicesModule,
     OcrServicesModule,
     EmailModule,

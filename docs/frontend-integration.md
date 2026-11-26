@@ -67,6 +67,9 @@ Per-student collections take the student id as the first segment. The full list 
 | `analyticsSeries(days)` | `GET /analytics/series?days=`, `GET /analytics/overview` |
 | global search | `GET /search?q=&kinds=` |
 | file uploads | `POST /uploads` (multipart `file`), `GET /uploads/:id` |
+| `evaluationService` AI marking | `POST /evaluations/:sid/:id/evaluate` (AI service; `ai_estimated` stage, handwriting quota) |
+| `ocrService` photo solver | `POST /ocr/:sid/solve { fileName, image: dataURL, solve }` (AI service; photo quota) |
+| teacher/admin question drafts | `POST /questions/generate` → drafts; save via `POST /review-items/questions` |
 
 ## What the frontend still has to change for API mode
 

@@ -1,5 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { invalid, notFound } from '../../common/exceptions/app.exception.js';
+import { Injectable, Logger } from '@nestjs/common';
+import { AppException, invalid, notFound } from '../../common/exceptions/app.exception.js';
 import { nowIso } from '../../common/utils/dates.js';
 import type { CurriculumVersion } from '../../contracts/curriculum.js';
 import type {
@@ -9,7 +9,6 @@ import type {
   TutorContext,
 } from '../../contracts/learning.js';
 import type { Question } from '../../contracts/question.js';
-import { integrationsConfig, type IntegrationsConfig } from '../../config/index.js';
 import {
   retrieve,
   runEngine,
@@ -17,13 +16,12 @@ import {
   type EngineOutput,
 } from '../../domain/tutor/tutor-engine.js';
 import {
-  CHAT_MODEL_PROVIDER,
-  type ChatModelProvider,
-} from '../../integrations/ai-providers/ai-provider.interfaces.js';
+  AiServiceClient,
+  type AiPassage,
+} from '../../integrations/ai-service/ai-service.client.js';
 import { UsageService } from '../billing/usage.service.js';
 import { ProgressService } from '../progress/progress.service.js';
 import { RecordStoreService, type Entity, type Where } from '../records/record-store.service.js';
-import { TUTOR_SYSTEM_PROMPT } from './constants/tutor-prompts.js';
 
 const PASSAGES = { collection: 'kbPassages', scope: '' };
 const NEW_TITLE = 'নতুন কথোপকথন';
@@ -36,9 +34,9 @@ export interface TutorReply {
 
 /**
  * AI tutor (docs/api/AI_TUTOR_CONTRACT.md). Pipeline: quota → safety → retrieval over ingested
- * KB passages → grounding/confidence → answer. With a real AI provider the answer text is
- * written by the model from the retrieved passages; otherwise the deterministic local engine
- * composes it (marked `simulated: true`). Citations always point to real passage ids.
+ * KB passages → grounding/confidence → answer. With AI_PROVIDER=service the ShikkhaAI AI service
+ * (../ai, Claude) writes the answer from the retrieved passages; otherwise the deterministic local
+ * engine composes it (marked `simulated: true`). Citations always point to real passage ids.
  */
 @Injectable()
 export class TutorService {
@@ -49,13 +47,8 @@ export class TutorService {
     private readonly store: RecordStoreService,
     private readonly usage: UsageService,
     private readonly progress: ProgressService,
-    @Inject(CHAT_MODEL_PROVIDER) private readonly model: ChatModelProvider,
-    @Inject(integrationsConfig.KEY) private readonly config: IntegrationsConfig,
+    private readonly aiService: AiServiceClient,
   ) {}
-
-  private get usesModel() {
-    return this.config.ai.provider !== 'none' && this.config.ai.provider !== 'mock';
-  }
 
   private async knowledge() {
     if (this.cache && Date.now() - this.cache.at < CACHE_MS) return this.cache;
@@ -118,25 +111,47 @@ export class TutorService {
       archivedVersionIds: archived,
       variant,
     });
-    if (!this.usesModel || out.warnings.includes('safety')) return { ...out, simulated: true };
+    if (!this.aiService.enabled || out.warnings.includes('safety'))
+      return { ...out, simulated: true };
+    // The AI service writes the answer from the passages the retriever found; citations stay the
+    // retriever's real passages, narrowed to the ones the model actually cited.
+    const byId = new Map(passages.map((p) => [p.id, p]));
+    const sources: AiPassage[] = out.citations
+      .map((c) => byId.get(c.passageId))
+      .filter((p): p is SourcePassage => !!p)
+      .map((p) => ({
+        id: p.id,
+        book_title: p.bookTitle,
+        chapter_title: p.chapterTitle,
+        page: p.page,
+        text: p.text,
+      }));
     try {
-      const sources = out.citations
-        .map((c, i) => `[${i + 1}] ${c.bookTitle} — ${c.chapterTitle}, p.${c.page}: ${c.excerpt}`)
-        .join('\n');
-      const res = await this.model.complete({
-        messages: [
-          {
-            role: 'system',
-            content: `${TUTOR_SYSTEM_PROMPT}\nTeaching mode: ${context.mode}. Language: ${context.language}. Level: ${context.levelCode} grade ${context.grade}.\nUse ONLY these textbook sources; if they don't cover the question, say so.\n${sources || '(no sources found)'}`,
-          },
-          ...history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-          { role: 'user', content: query },
-        ],
-        temperature: 0.3,
+      const res = await this.aiService.tutorAnswer({
+        query,
+        context: {
+          level_code: context.levelCode,
+          grade: context.grade,
+          subject: context.subjectId,
+          chapter: context.chapterId,
+          mode: context.mode,
+          language: context.language,
+        },
+        passages: sources,
+        history: history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
       });
-      return { ...out, content: res.content, simulated: false };
+      const cited = new Set(res.cited_passage_ids);
+      const citations = out.citations.filter((c) => cited.has(c.passageId));
+      return {
+        ...out,
+        content: res.content,
+        citations,
+        grounding: citations.length ? out.grounding : 'general',
+        simulated: res.simulated,
+      };
     } catch (error) {
-      this.logger.warn({ err: error }, 'AI provider failed; falling back to the local engine');
+      if (error instanceof AppException && error.code === 'SAFETY_BLOCKED') throw error;
+      this.logger.warn({ err: error }, 'AI service failed; falling back to the local engine');
       return { ...out, simulated: true };
     }
   }

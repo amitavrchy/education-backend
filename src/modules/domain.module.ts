@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AccessModule } from './access/access.module.js';
 import { AdminModule } from './admin/admin.module.js';
+import { AiFeaturesModule } from './ai-features/ai-features.module.js';
 import { AiKnowledgeModule } from './ai-knowledge/ai-knowledge.module.js';
 import { AiTutorModule } from './ai-tutor/ai-tutor.module.js';
 import { AnswerEvaluationModule } from './answer-evaluation/answer-evaluation.module.js';
@@ -38,6 +39,7 @@ import { UsersModule } from './users/users.module.js';
     GuardianModule,
     AiKnowledgeModule,
     AiTutorModule,
+    AiFeaturesModule,
     AvatarModule,
     AnswerEvaluationModule,
     QuestionGenerationModule,
