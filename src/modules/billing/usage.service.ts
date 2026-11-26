@@ -31,14 +31,6 @@ export const PLAN_LIMITS: Record<PlanCode, PlanLimits> = {
     members: 4,
     handwritingEvaluationsPerMonth: 40,
   },
-  institution: {
-    aiMessagesPerDay: 500,
-    voiceMinutesPerMonth: 600,
-    photoSolvesPerDay: 100,
-    offlineDownloads: 100,
-    members: 1000,
-    handwritingEvaluationsPerMonth: 100,
-  },
 };
 
 export type UsageKind = 'ai' | 'voice' | 'photo' | 'handwriting';

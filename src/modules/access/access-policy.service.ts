@@ -44,7 +44,7 @@ const STAFF_AREAS: StudentArea[] = [
  * Record-level authorization for student-owned data (most users are minors).
  * - Student: their own records.
  * - Guardian: children with an ACTIVE guardian link whose flag allows the area.
- * - Teacher / institution admin: students of their own institution, non-private areas only.
+ * - Teacher: students of their own school, non-private areas only.
  * - Platform staff: `users.view` or `analytics.view` for non-private areas.
  * Nobody but the student reads private material (notes, flashcards, tutor history unless shared).
  * Callers turn a `false` into a 404 so record existence can't be probed.
@@ -69,10 +69,7 @@ export class AccessPolicyService {
     if (area === 'aiConversations') return false;
 
     if (STAFF_AREAS.includes(area)) {
-      if (
-        hasAnyPermission(user.permissions, ['students.view', 'institution.manage']) &&
-        user.institutionId
-      ) {
+      if (hasAnyPermission(user.permissions, ['students.view']) && user.institutionId) {
         if ((await this.studentInstitution(studentId)) === user.institutionId) return true;
       }
       if (hasAnyPermission(user.permissions, ['users.view', 'analytics.view'])) return true;
@@ -100,10 +97,7 @@ export class AccessPolicyService {
     }
     if (area !== 'aiConversations' && STAFF_AREAS.includes(area)) {
       if (hasAnyPermission(user.permissions, ['users.view', 'analytics.view'])) return 'all';
-      if (
-        hasAnyPermission(user.permissions, ['students.view', 'institution.manage']) &&
-        user.institutionId
-      ) {
+      if (hasAnyPermission(user.permissions, ['students.view']) && user.institutionId) {
         const rows = await this.prisma.user.findMany({
           where: { institutionId: user.institutionId, role: 'student', deletedAt: null },
           select: { id: true },

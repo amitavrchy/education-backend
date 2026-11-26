@@ -113,4 +113,4 @@ To add a vendor, write one adapter class and add a case in `AiProvidersModule`. 
 helmet; an allow-listed CORS origin list; JSON body limit; global DTO whitelisting (`forbidNonWhitelisted`);
 rate limiting (stricter on auth routes); pino log redaction of the authorization header, cookies, passwords and tokens;
 upload validation (size, MIME type, magic bytes) and random non-guessable storage keys; an append-only `audit_logs` table;
-guardian-consent fields on student profiles; and a generic 500 that never leaks internals.
+guardians see only what the student shares; and a generic 500 that never leaks internals.

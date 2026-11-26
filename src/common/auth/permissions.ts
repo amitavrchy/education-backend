@@ -20,8 +20,6 @@ export const PERMISSIONS = [
   'submission.review',
   'evaluation.review',
   'students.view',
-  'institution.manage',
-  'institution.billing',
   'admin.access',
   'analytics.view',
   'curriculum.manage',
@@ -64,9 +62,7 @@ const contentOps: Permission[] = [
   'kb.view',
 ];
 
-const allAdmin = PERMISSIONS.filter(
-  (p) => !['learn', 'guardian.view', 'institution.manage', 'institution.billing'].includes(p),
-);
+const allAdmin = PERMISSIONS.filter((p) => !['learn', 'guardian.view'].includes(p));
 
 export const DEFAULT_ROLE_PERMISSIONS: PermissionMatrix = {
   student: ['learn'],
@@ -90,8 +86,6 @@ export const DEFAULT_ROLE_PERMISSIONS: PermissionMatrix = {
     'evaluation.review',
   ],
   content_manager: ['admin.access', ...contentOps, 'analytics.view'],
-  school_admin: ['institution.manage', 'institution.billing'],
-  college_admin: ['institution.manage', 'institution.billing'],
   support: [
     'admin.access',
     'users.view',
@@ -110,8 +104,6 @@ export const ROLE_PORTAL: Record<UserRole, PortalKey> = {
   teacher: 'teacher',
   content_reviewer: 'teacher',
   content_manager: 'admin',
-  school_admin: 'institution',
-  college_admin: 'institution',
   support: 'admin',
   platform_admin: 'admin',
   super_admin: 'admin',

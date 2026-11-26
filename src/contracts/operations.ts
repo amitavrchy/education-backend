@@ -49,7 +49,7 @@ export interface Notice {
 
 // ---------------------------------------------------------------- Billing
 
-export type PlanCode = 'free' | 'pro' | 'family' | 'institution';
+export type PlanCode = 'free' | 'pro' | 'family';
 
 export interface PlanLimits {
   aiMessagesPerDay: number;
@@ -338,17 +338,6 @@ export interface PrivacyRequest extends Timestamps {
   note?: string;
 }
 
-export interface ConsentRecord extends Timestamps {
-  id: string;
-  studentId: string;
-  studentName: string;
-  guardianName: string;
-  guardianContact: string;
-  method: 'otp' | 'email' | 'institution';
-  status: 'pending' | 'granted' | 'withdrawn' | 'rejected';
-  scope: string[];
-}
-
 export interface SecurityAlert {
   id: string;
   at: string;
@@ -385,7 +374,6 @@ export interface SystemConfig {
   maintenanceMode: boolean;
   signupsEnabled: boolean;
   defaultLocale: 'bn' | 'en';
-  minAgeWithoutConsent: number;
   maxUploadMb: number;
   featureFlags: Record<string, boolean>;
 }

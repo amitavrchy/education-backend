@@ -53,9 +53,6 @@ export class RegisterDto {
   @IsIn(SELF_REGISTRATION_ROLES)
   role: (typeof SELF_REGISTRATION_ROLES)[number];
 
-  @IsBoolean()
-  under18: boolean;
-
   /** Optional: OTP-only accounts can set a password later via reset. */
   @IsOptional()
   @IsString()

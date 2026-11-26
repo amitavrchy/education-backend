@@ -373,7 +373,6 @@ export class AuthService {
       identifier,
       channel: dto.channel,
       role: dto.role,
-      under18: dto.under18,
       passwordHash: dto.password ? await this.hasher.hash(dto.password) : null,
     };
     return this.sendOtp('register', identifier, { registration });
@@ -453,7 +452,6 @@ export class AuthService {
         identifier: string;
         channel: 'email' | 'phone';
         role: 'student' | 'parent';
-        under18: boolean;
         passwordHash: string | null;
       };
       if (await this.findCredential(reg.identifier))
@@ -488,7 +486,6 @@ export class AuthService {
     identifier: string;
     channel: 'email' | 'phone';
     role: 'student' | 'parent';
-    under18: boolean;
     passwordHash: string | null;
   }) {
     const id = RecordStoreService.newId('u');
@@ -506,7 +503,6 @@ export class AuthService {
       studentIds: [],
       planCode: 'free',
       lastActiveAt: now,
-      consent: reg.role === 'student' ? (reg.under18 ? 'pending' : 'not_required') : 'not_required',
       supportTickets: [],
       onboarded: reg.role !== 'student',
       demo: true,

@@ -48,6 +48,7 @@ async function main() {
   const english = await fe('services/english.service.ts');
   const usage = await fe('services/usage.service.ts');
   const guardian = await fe('services/guardian.service.ts');
+  const avatar = await fe('services/avatar.service.ts');
 
   const collections: Record<string, unknown[]> = {};
   const documents: Record<string, unknown> = {};
@@ -87,7 +88,6 @@ async function main() {
     teacherProfiles: people.teacherProfilesRepo,
     institutions: people.institutionsRepo,
     institutionMembers: people.membersRepo,
-    consentRecords: people.consentRepo,
     privacyRequests: people.privacyRequestsRepo,
     questions: question.questionsRepo,
     contentReports: question.reportsRepo,
@@ -99,6 +99,8 @@ async function main() {
     submissions: school.submissionsRepo,
     announcements: school.announcementsRepo,
     institutionResources: school.resourcesRepo,
+    bookAvatars: avatar.avatarsRepo,
+    avatarReports: avatar.avatarReportsRepo,
   };
   for (const [name, repo] of Object.entries(globals)) await put(name, () => repo.raw());
 
@@ -129,7 +131,6 @@ async function main() {
         ...s,
         ...(await notif.notificationService.list('parent', { includeArchived: true })),
         ...(await notif.notificationService.list('teacher', { includeArchived: true })),
-        ...(await notif.notificationService.list('institution', { includeArchived: true })),
         ...(await notif.notificationService.list('admin', { includeArchived: true })),
       ]),
   );
@@ -160,6 +161,8 @@ async function main() {
     await put(`offline:${id}`, () => offline.offlineRepo(id).raw());
     await put(`audioProgress:${id}`, () => audio.audioProgressRepo(id).raw());
     await put(`voice:${id}`, () => voice.voiceRepo(id).raw());
+    await put(`avatarSessions:${id}`, () => avatar.avatarSessionsRepo(id).raw());
+    await put(`avatarMessages:${id}`, () => avatar.avatarMessagesRepo(id).raw());
     await put(`tasks:${id}`, () => planner.taskRepo(id).raw());
     await put(`goals:${id}`, () => planner.studyPlannerService.goals(id));
     await put(`conversations:${id}`, () => tutor.tutorService.conversations(id));

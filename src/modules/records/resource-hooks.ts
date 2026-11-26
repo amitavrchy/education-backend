@@ -36,7 +36,6 @@ export const usersHooks: ResourceHooks = {
       guardianIds: [],
       studentIds: [],
       planCode: 'free',
-      consent: 'not_required',
       supportTickets: [],
       onboarded: data.role !== 'student',
       ...data,
@@ -50,7 +49,7 @@ export const usersHooks: ResourceHooks = {
       onlyFields(existing, next, ['name', 'avatarUrl', 'onboarded', 'lastActiveAt', 'preferences']);
     } else if (!can(ctx, 'users.manage')) {
       // Support agents handle tickets/status, not roles.
-      onlyFields(existing, next, ['status', 'supportTickets', 'consent', 'lastActiveAt', 'notes']);
+      onlyFields(existing, next, ['status', 'supportTickets', 'lastActiveAt', 'notes']);
     }
     if (existing.role !== next.role) {
       if (!USER_ROLES.includes(next.role as never))
@@ -145,8 +144,7 @@ export const teacherFeedbackHooks: ResourceHooks = {
     return { acknowledged: false, at: new Date().toISOString(), teacherId: ctx.user!.id, ...data };
   },
   beforeUpdate(existing, next, ctx) {
-    if (!can(ctx, 'teacher.dashboard', 'institution.manage'))
-      onlyFields(existing, next, ['acknowledged']);
+    if (!can(ctx, 'teacher.dashboard')) onlyFields(existing, next, ['acknowledged']);
     return next;
   },
 };
@@ -194,7 +192,7 @@ export const tenantHooks: ResourceHooks = {
 export const assignmentsHooks: ResourceHooks = {
   async beforeCreate(data, ctx) {
     const pinned: Entity = await tenantHooks.beforeCreate!.call(tenantHooks, data, ctx);
-    if (can(ctx, 'institution.manage', 'users.manage')) return pinned;
+    if (can(ctx, 'users.manage')) return pinned;
     return { ...pinned, teacherId: ctx.user!.id };
   },
   beforeUpdate: (existing, next, ctx) =>
@@ -214,7 +212,7 @@ const SUBMISSION_STUDENT_FIELDS = [
 
 export const submissionsHooks: ResourceHooks = {
   beforeCreate(data, ctx) {
-    if (can(ctx, 'submission.review', 'institution.manage')) return data;
+    if (can(ctx, 'submission.review')) return data;
     return {
       ...data,
       studentId: ctx.user!.id,
@@ -222,7 +220,7 @@ export const submissionsHooks: ResourceHooks = {
     };
   },
   beforeUpdate(existing, next, ctx) {
-    if (!can(ctx, 'submission.review', 'institution.manage')) {
+    if (!can(ctx, 'submission.review')) {
       onlyFields(existing, next, SUBMISSION_STUDENT_FIELDS);
       if (!['pending', 'submitted', 'late'].includes(String(next.status))) forbidden();
     }

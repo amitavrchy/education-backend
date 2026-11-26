@@ -9,7 +9,7 @@ import { zparse } from '../../common/utils/zod.util.js';
 import { BillingService } from './billing.service.js';
 import { UsageService } from './usage.service.js';
 
-const planCode = z.enum(['free', 'pro', 'family', 'institution']);
+const planCode = z.enum(['free', 'pro', 'family']);
 const cycle = z.enum(['monthly', 'yearly']);
 
 const quoteBody = z.object({

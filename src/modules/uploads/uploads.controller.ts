@@ -80,7 +80,7 @@ export class UploadsController {
         (file.visibility === 'INSTITUTION' &&
           !!user.institutionId &&
           file.institutionId === user.institutionId &&
-          hasAnyPermission(user.permissions, ['teacher.dashboard', 'institution.manage'])) ||
+          hasAnyPermission(user.permissions, ['teacher.dashboard'])) ||
         hasAnyPermission(user.permissions, ['users.view', 'kb.manage']));
     if (!file || !allowed) notFound('File');
     res.setHeader('Content-Type', file.mimeType);
