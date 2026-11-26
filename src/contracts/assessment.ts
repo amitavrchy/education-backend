@@ -15,7 +15,6 @@ export const EXAM_KINDS = [
   'daily_challenge',
   'adaptive',
   'custom',
-  'institution',
   'teacher_assigned',
   'mixed',
   'oral',

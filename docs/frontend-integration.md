@@ -17,7 +17,7 @@ Point the frontend at it with `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`
 `NEXT_PUBLIC_USE_MOCK_API=false` (only when you deliberately test against the real API).
 
 Demo accounts: the frontend's (`student@shikkha.ai`, `parent@…`, `teacher@…`, `reviewer@…`, `content@…`,
-`school@…`, `college@…`, `support@…`, `admin@…`, `super@…`). Password `SEED_DEMO_PASSWORD`; in demo mode any
+`support@…`, `admin@…`, `super@…`). Password `SEED_DEMO_PASSWORD`; in demo mode any
 password except `wrongpass`; OTP `123456`.
 
 ## Demo data

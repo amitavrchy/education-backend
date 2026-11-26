@@ -72,11 +72,14 @@ export async function seedFrontendData(
   opts: { passwordHash: string; reset?: boolean },
 ) {
   if (opts.reset) {
+    const keep = (seed.collections.users ?? []).map((u) => String(u.id));
     await prisma.$transaction([
       prisma.record.deleteMany(),
       prisma.document.deleteMany(),
       prisma.userSession.deleteMany(),
       prisma.otpChallenge.deleteMany(),
+      // Accounts not in the demo data (e.g. registered while testing) go too.
+      prisma.user.deleteMany({ where: { id: { notIn: keep } } }),
     ]);
   }
 

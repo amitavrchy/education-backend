@@ -208,11 +208,6 @@ export interface GamificationState {
     status: 'active' | 'won' | 'lost' | 'pending';
     myScore: number;
     theirScore: number;
-    /** Mobile app details (optional). */
-    goal?: 'minutes' | 'questions';
-    target?: number;
-    startedAt?: string;
-    endsAt?: string;
   }[];
 }
 

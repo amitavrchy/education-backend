@@ -283,7 +283,7 @@ export class ExamsService {
     if (
       exam.scheduledAt &&
       new Date(exam.scheduledAt).getTime() > now &&
-      exam.kind === 'institution'
+      exam.kind === 'teacher_assigned'
     )
       invalid('EXAM_NOT_OPEN', undefined, 409);
     if (exam.closesAt && new Date(exam.closesAt).getTime() < now)
