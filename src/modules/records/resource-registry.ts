@@ -85,6 +85,35 @@ export const RESOURCES: ResourceDef[] = [
     idPrefix: 'book',
     searchFields: ['title.bn', 'title.en', 'publisher', 'edition'],
   }),
+  // Per-book teacher avatars. Students read them; their usage counters change only through
+  // /avatar/* (sessions, questions, feedback), so clients can't edit the stats.
+  g({
+    collection: 'bookAvatars',
+    entity: 'Avatar',
+    idPrefix: 'av',
+    searchFields: ['name.bn', 'name.en', 'title.bn', 'title.en'],
+    read: [auth],
+    create: [perm('books.manage', 'kb.manage', 'content.review', 'teacher.dashboard')],
+    update: [perm('books.manage', 'kb.manage', 'content.review', 'teacher.dashboard')],
+    remove: [perm('books.manage', 'kb.manage')],
+    audit: 'content',
+  }),
+  g({
+    collection: 'avatarReports',
+    entity: 'AvatarReport',
+    searchFields: ['question', 'reason'],
+    defaultSort: { sortBy: 'createdAt', sortOrder: 'desc' },
+    ownerField: 'studentId',
+    read: [
+      self('studentId'),
+      perm('books.manage', 'kb.manage', 'content.review', 'teacher.dashboard'),
+    ],
+    // Students report through POST /avatar/:studentId/messages/:id/report.
+    create: NOBODY,
+    update: [perm('books.manage', 'kb.manage', 'content.review', 'teacher.dashboard')],
+    remove: [perm('books.manage', 'kb.manage')],
+    audit: 'content',
+  }),
   catalog('boardPapers', ['board.manage'], { searchFields: ['title'], entity: 'BoardPaper' }),
   g({
     collection: 'institutionPapers',
@@ -606,6 +635,20 @@ export const RESOURCES: ResourceDef[] = [
     searchFields: ['content'],
     defaultSort: { sortBy: 'createdAt', sortOrder: 'asc' },
     hooks: H.messagesHooks,
+  }),
+  // Book avatar chats: written by /avatar/* only; guardians get counts via /avatar/:id/usage.
+  s({
+    collection: 'avatarSessions',
+    area: 'aiConversations',
+    ownerWrite: 'server',
+    timestamps: false,
+    defaultSort: { sortBy: 'lastAt', sortOrder: 'desc' },
+  }),
+  s({
+    collection: 'avatarMessages',
+    area: 'aiConversations',
+    ownerWrite: 'server',
+    timestamps: false,
   }),
   s({ collection: 'folders', area: 'private', ownerWrite: 'owner', timestamps: false }),
   // Private study material.

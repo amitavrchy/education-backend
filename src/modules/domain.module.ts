@@ -4,6 +4,7 @@ import { AdminModule } from './admin/admin.module.js';
 import { AiKnowledgeModule } from './ai-knowledge/ai-knowledge.module.js';
 import { AiTutorModule } from './ai-tutor/ai-tutor.module.js';
 import { AnswerEvaluationModule } from './answer-evaluation/answer-evaluation.module.js';
+import { AvatarModule } from './avatar/avatar.module.js';
 import { AuditLogsModule } from './audit-logs/audit-logs.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { DocumentProcessingModule } from './document-processing/document-processing.module.js';
@@ -37,6 +38,7 @@ import { UsersModule } from './users/users.module.js';
     GuardianModule,
     AiKnowledgeModule,
     AiTutorModule,
+    AvatarModule,
     AnswerEvaluationModule,
     QuestionGenerationModule,
     DocumentProcessingModule,
