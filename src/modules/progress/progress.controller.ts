@@ -64,6 +64,11 @@ const challengesBody = z.object({
         status: z.enum(['active', 'won', 'lost', 'pending']),
         myScore: z.number().int().min(0).max(1000),
         theirScore: z.number().int().min(0).max(1000),
+        // Optional details the mobile app keeps (goal, target, time window); the web ignores them.
+        goal: z.enum(['minutes', 'questions']).optional(),
+        target: z.number().int().min(1).max(100_000).optional(),
+        startedAt: z.iso.datetime().optional(),
+        endsAt: z.iso.datetime().optional(),
       }),
     )
     .max(50),
