@@ -108,6 +108,15 @@ BullMQ on Redis. Queues: `pdf-processing`, `ocr-processing`, `ai-document-indexi
 `AI_PROVIDER=none` (the default) makes AI endpoints answer 503. `AI_PROVIDER=mock` returns offline fake answers for frontend work.
 To add a vendor, write one adapter class and add a case in `AiProvidersModule`. No domain code changes.
 
+## AI service
+
+All AI code (prompts, model calls) lives in the separate `../ai` service (FastAPI + Claude). The backend
+calls it with `AiServiceClient` (`src/integrations/ai-service`) when `AI_PROVIDER=service`, sending grounded
+inputs (retrieved passages, rubric, images) and storing results in the contract store; it keeps access checks,
+quotas and persistence. Endpoints: tutor answers, answer evaluation, OCR/photo solving, question drafts.
+Without the service the tutor falls back to the local deterministic engine (`simulated: true`) and the other
+AI endpoints answer 503 `AI_NOT_CONFIGURED`.
+
 ## Security baseline
 
 helmet; an allow-listed CORS origin list; JSON body limit; global DTO whitelisting (`forbidNonWhitelisted`);
