@@ -225,6 +225,13 @@ export class AiServiceClient {
     }>('/v1/solve', input);
   }
 
+  tts(input: { text: string; language: 'bn' | 'en'; voice: 'female' | 'male' }) {
+    return this.post<{ media_type: string; data: string; simulated: boolean; model: string }>(
+      '/v1/tts',
+      input,
+    );
+  }
+
   tutorRespond(input: Parameters<AiServiceClient['tutorAnswer']>[0]) {
     return this.post<TutorReplyResult>('/v1/tutor/respond', input);
   }
