@@ -567,6 +567,8 @@ export const RESOURCES: ResourceDef[] = [
     collection: 'examAttempts',
     area: 'scores',
     ownerWrite: 'server',
+    // Exam managers may override a result (audited on the admin side).
+    staffWrite: ['exams.manage'],
     timestamps: false,
     searchFields: ['examTitle'],
     defaultSort: { sortBy: 'startedAt', sortOrder: 'desc' },
