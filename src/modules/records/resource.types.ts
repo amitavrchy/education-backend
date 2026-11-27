@@ -54,6 +54,20 @@ export interface HookDeps {
   revokeUserSessions(userId: string): Promise<void>;
   startIngestion(jobId: string): Promise<void>;
   institutionOfStudent(studentId: string): Promise<string | null>;
+  /** In-app notification to specific users (best effort). */
+  notify(
+    userIds: string[],
+    input: {
+      type: string;
+      title: string;
+      body: string;
+      href?: string;
+      priority?: 'low' | 'normal' | 'high';
+    },
+  ): Promise<void>;
+  /** Guardians with an active link to the student whose sharing flag allows `flag`. */
+  guardiansOf(studentId: string, flag: string): Promise<string[]>;
+  find(collection: string, id: string, scope?: string): Promise<Entity | undefined>;
 }
 
 export interface ResourceHooks {

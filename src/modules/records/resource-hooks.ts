@@ -143,6 +143,16 @@ export const teacherFeedbackHooks: ResourceHooks = {
   beforeCreate(data, ctx) {
     return { acknowledged: false, at: new Date().toISOString(), teacherId: ctx.user!.id, ...data };
   },
+  // Guardians who may see teacher feedback get it in their inbox.
+  async afterCreate(data, ctx) {
+    const guardians = await ctx.deps.guardiansOf(asText(data.studentId), 'teacherFeedback');
+    await ctx.deps.notify(guardians, {
+      type: 'teacher_feedback',
+      title: `শিক্ষকের মন্তব্য: ${asText(data.teacherName)}`,
+      body: asText(data.text).slice(0, 120),
+      href: '/parent/feedback',
+    });
+  },
   beforeUpdate(existing, next, ctx) {
     if (!can(ctx, 'teacher.dashboard')) onlyFields(existing, next, ['acknowledged']);
     return next;
@@ -210,7 +220,40 @@ const SUBMISSION_STUDENT_FIELDS = [
   'fileNames',
 ];
 
+async function assignmentTitle(ctx: HookContext, assignmentId: unknown) {
+  const a = await ctx.deps.find('assignments', String(assignmentId));
+  return asText(a?.title);
+}
+
 export const submissionsHooks: ResourceHooks = {
+  // A teacher distributing an assignment creates the student's pending submission.
+  async afterCreate(data, ctx) {
+    if (!can(ctx, 'submission.review') || data.status !== 'pending') return;
+    const a = await ctx.deps.find('assignments', asText(data.assignmentId));
+    await ctx.deps.notify([asText(data.studentId)], {
+      type: 'new_assignment',
+      title: `নতুন অ্যাসাইনমেন্ট: ${asText(a?.title)}`,
+      body: a?.dueAt
+        ? `জমার শেষ সময়: ${new Date(asText(a.dueAt)).toLocaleDateString('bn-BD')}`
+        : '',
+      href: '/student/study-planner',
+    });
+  },
+  async afterUpdate(next, existing, ctx) {
+    if (!can(ctx, 'submission.review') || next.status === existing.status) return;
+    if (next.status !== 'graded' && next.status !== 'returned') return;
+    const title = await assignmentTitle(ctx, next.assignmentId);
+    await ctx.deps.notify([asText(next.studentId)], {
+      type: 'teacher_feedback',
+      title:
+        next.status === 'graded' ? `অ্যাসাইনমেন্টের নম্বর: ${title}` : `অ্যাসাইনমেন্ট ফেরত: ${title}`,
+      body:
+        next.status === 'graded'
+          ? `${asText(next.marks)} নম্বর · ${asText(next.feedback).slice(0, 60)}`
+          : asText(next.feedback).slice(0, 100),
+      href: '/student/notifications',
+    });
+  },
   beforeCreate(data, ctx) {
     if (can(ctx, 'submission.review')) return data;
     return {
@@ -222,7 +265,7 @@ export const submissionsHooks: ResourceHooks = {
   beforeUpdate(existing, next, ctx) {
     if (!can(ctx, 'submission.review')) {
       onlyFields(existing, next, SUBMISSION_STUDENT_FIELDS);
-      if (!['pending', 'submitted', 'late'].includes(String(next.status))) forbidden();
+      if (!['pending', 'submitted', 'late'].includes(asText(next.status))) forbidden();
     }
     return next;
   },
@@ -268,9 +311,22 @@ export const evaluationsHooks: ResourceHooks = {
     // Students can't promote their own work to a teacher-reviewed or official grade.
     const promoted =
       existing.stage !== next.stage &&
-      ['teacher_reviewed', 'official'].includes(String(next.stage));
+      ['teacher_reviewed', 'official'].includes(asText(next.stage));
     if (promoted && !can(ctx, 'evaluation.review')) forbidden();
     return next;
+  },
+  async afterUpdate(next, existing, ctx) {
+    if (
+      next.stage === existing.stage ||
+      !['teacher_reviewed', 'official'].includes(asText(next.stage))
+    )
+      return;
+    await ctx.deps.notify([ctx.scope], {
+      type: 'teacher_feedback',
+      title: `খাতা মূল্যায়ন সম্পন্ন: ${asText(next.title)}`,
+      body: `শিক্ষকের নম্বর: ${asText(next.teacherMarks ?? next.officialMarks)}/${asText(next.maxMarks)}`,
+      href: '/student/answer-evaluation',
+    });
   },
 };
 
