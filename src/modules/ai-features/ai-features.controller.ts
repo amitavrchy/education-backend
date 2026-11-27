@@ -15,6 +15,13 @@ const photoBody = z.object({
   image: z.string().max(12_000_000),
   solve: z.boolean().default(true),
   subjectHint: z.string().max(200).optional(),
+  /** false = read only (e.g. transcribing answer-script pages); nothing is stored. */
+  save: z.boolean().default(true),
+});
+const solveJobBody = z.object({
+  correctedText: z.string().trim().min(1).max(8000),
+  subjectId: z.string().max(120).optional(),
+  chapterId: z.string().max(160).optional(),
 });
 
 const generateBody = z.object({
@@ -180,6 +187,21 @@ export class AiFeaturesController {
   ) {
     assertSelf(user, studentId);
     return this.features.solvePhoto(studentId, zparse(photoBody, body));
+  }
+
+  @Post('ocr/:studentId/:jobId/solve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('learn')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: "Photo solver: solve the job's (corrected) text" })
+  solveJob(
+    @Param('studentId') studentId: string,
+    @Param('jobId') jobId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    assertSelf(user, studentId);
+    return this.features.solveJob(studentId, jobId, zparse(solveJobBody, body));
   }
 
   @Post('questions/generate')

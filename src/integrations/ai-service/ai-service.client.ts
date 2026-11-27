@@ -215,6 +215,16 @@ export class AiServiceClient {
     );
   }
 
+  solveText(input: { text: string; subject_hint?: string; language: string }) {
+    return this.post<{
+      steps: string[];
+      answer: string;
+      explanation: string;
+      simulated: boolean;
+      model: string;
+    }>('/v1/solve', input);
+  }
+
   tutorRespond(input: Parameters<AiServiceClient['tutorAnswer']>[0]) {
     return this.post<TutorReplyResult>('/v1/tutor/respond', input);
   }

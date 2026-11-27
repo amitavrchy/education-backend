@@ -59,6 +59,8 @@ export class AiFeaturesService {
       .filter((i): i is AiImage => !!i);
     const answerText = ev.correctedText || ev.ocrText || undefined;
     if (!images.length && !answerText) invalid('NO_PAGES');
+    // A transcription the student corrected is marked as text; otherwise the AI reads the pages.
+    const useText = !!ev.correctedText?.trim() || !images.length;
     if (isStudent) await this.usage.consume(studentId, 'handwriting');
 
     const res = await this.ai.evaluate({
@@ -66,14 +68,14 @@ export class AiFeaturesService {
       model_answer: ev.modelAnswer,
       max_marks: ev.maxMarks,
       rubric: ev.rubric.map((r) => ({ criterion: r.criterion, marks: r.max })),
-      answer_text: images.length ? undefined : answerText,
-      images,
+      answer_text: useText ? answerText : undefined,
+      images: useText ? [] : images,
       language: 'bn',
     });
     const scores = new Map(res.rubric.map((r) => [r.criterion, r]));
     const updated: HandwritingEvaluation = {
       ...ev,
-      ocrText: images.length ? res.transcribed_text : ev.ocrText,
+      ocrText: useText ? ev.ocrText : res.transcribed_text,
       stage: 'ai_estimated',
       aiMarks: res.total_marks,
       rubric: ev.rubric.length
@@ -100,7 +102,7 @@ export class AiFeaturesService {
   /** Photo solver: read a photographed problem (and optionally solve it) → stored OcrJob. */
   async solvePhoto(
     studentId: string,
-    input: { fileName: string; image: string; solve: boolean; subjectHint?: string },
+    input: { fileName: string; image: string; solve: boolean; subjectHint?: string; save: boolean },
   ) {
     const image = imageFromDataUrl(input.image);
     if (!image) invalid('INVALID_IMAGE');
@@ -121,8 +123,38 @@ export class AiFeaturesService {
       solution: res.solution ?? undefined,
       createdAt: nowIso(),
     };
-    await this.store.insert({ collection: 'ocr', scope: studentId }, job as OcrJob & Entity);
+    if (input.save)
+      await this.store.insert({ collection: 'ocr', scope: studentId }, job as OcrJob & Entity);
     return { job, simulated: res.simulated };
+  }
+
+  /** Solves the (corrected) text of a photo-solver job and stores the solution on it. */
+  async solveJob(
+    studentId: string,
+    jobId: string,
+    input: { correctedText: string; subjectId?: string; chapterId?: string },
+  ) {
+    const ref = { collection: 'ocr', scope: studentId };
+    const job = (await this.store.find<OcrJob & Entity>(ref, jobId)) ?? notFound('OcrJob');
+    const subject = input.subjectId
+      ? await this.store.find<Subject & Entity>(CURRICULUM('subjects'), input.subjectId)
+      : undefined;
+    await this.usage.consume(studentId, 'ai');
+    const res = await this.ai.solveText({
+      text: input.correctedText,
+      subject_hint: subject?.name.en,
+      language: 'bn',
+    });
+    const updated: OcrJob = {
+      ...job,
+      status: 'solved',
+      correctedText: input.correctedText,
+      detectedSubjectId: input.subjectId ?? job.detectedSubjectId,
+      chapterId: input.chapterId ?? job.chapterId,
+      solution: { steps: res.steps, answer: res.answer, explanation: res.explanation },
+    };
+    await this.store.replace(ref, updated as OcrJob & Entity);
+    return updated;
   }
 
   private async subjectIdFor(name: string): Promise<string | undefined> {
