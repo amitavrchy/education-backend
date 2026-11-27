@@ -315,7 +315,9 @@ export class AuthService {
         });
     } catch (error) {
       this.logger.error({ err: error }, 'OTP delivery failed');
-      invalid('OTP_DELIVERY_FAILED', undefined, 503);
+      // Demo mode uses the fixed code, so a provider rejection (e.g. an unverified sender
+      // domain) must not block sign-up there.
+      if (!this.demo) invalid('OTP_DELIVERY_FAILED', undefined, 503);
     }
   }
 

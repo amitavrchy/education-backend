@@ -23,7 +23,7 @@ export const integrationsConfig = registerAs('integrations', () => {
       serviceKey: env.AI_SERVICE_KEY,
       serviceTimeoutMs: env.AI_SERVICE_TIMEOUT_MS,
     },
-    email: { provider: env.EMAIL_PROVIDER, from: env.EMAIL_FROM },
+    email: { provider: env.EMAIL_PROVIDER, from: env.EMAIL_FROM, resendApiKey: env.RESEND_API_KEY },
     sms: { provider: env.SMS_PROVIDER },
     payment: { provider: env.PAYMENT_PROVIDER },
     auth: {

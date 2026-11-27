@@ -79,13 +79,21 @@ export const envSchema = z
     AI_SERVICE_URL: z.url().default('http://localhost:8100'),
     AI_SERVICE_KEY: z.string().optional(),
     AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
-    EMAIL_PROVIDER: z.enum(['console', 'none']).default('console'),
+    EMAIL_PROVIDER: z.enum(['console', 'resend', 'none']).default('console'),
+    RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().default('ShikkhaAI <no-reply@shikkha.ai>'),
     SMS_PROVIDER: z.enum(['console', 'none']).default('console'),
     // manual = bKash/Nagad/Rocket/Upay send-money with an admin-verified transaction id.
     PAYMENT_PROVIDER: z.enum(['none', 'mock', 'manual']).default('manual'),
   })
   .superRefine((env, ctx) => {
+    if (env.EMAIL_PROVIDER === 'resend' && !env.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RESEND_API_KEY'],
+        message: 'RESEND_API_KEY is required when EMAIL_PROVIDER=resend',
+      });
+    }
     if (env.AI_PROVIDER === 'service' && (!env.AI_SERVICE_KEY || env.AI_SERVICE_KEY.length < 32)) {
       ctx.addIssue({
         code: 'custom',
