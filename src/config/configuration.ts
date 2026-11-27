@@ -57,6 +57,8 @@ export const envSchema = z
     // except "wrongpass", and the role switcher works — exactly what the frontend's demo UI expects.
     AUTH_DEMO_MODE: booleanString.default(false),
     SEED_DEMO_PASSWORD: z.string().min(8).default('demo-password-123'),
+    // Load the bundled demo data (prisma/seed-data) at startup when the database is empty.
+    SEED_ON_EMPTY: booleanString.default(true),
     OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
 
@@ -88,6 +90,17 @@ export const envSchema = z
         code: 'custom',
         path: ['AI_SERVICE_KEY'],
         message: 'AI_SERVICE_KEY (32+ chars) is required when AI_PROVIDER=service',
+      });
+    }
+    if (
+      env.NODE_ENV === 'production' &&
+      env.SEED_ON_EMPTY &&
+      env.SEED_DEMO_PASSWORD === 'demo-password-123'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SEED_DEMO_PASSWORD'],
+        message: 'Set a private SEED_DEMO_PASSWORD (or SEED_ON_EMPTY=false) in production',
       });
     }
     if (env.NODE_ENV === 'production' && env.AUTH_DEMO_MODE) {
