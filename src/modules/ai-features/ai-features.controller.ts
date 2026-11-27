@@ -189,6 +189,21 @@ export class AiFeaturesController {
     return this.features.solvePhoto(studentId, zparse(photoBody, body));
   }
 
+  @Post('solve/:studentId')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('learn')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Step-by-step solution of a typed problem (not stored)' })
+  solveTyped(
+    @Param('studentId') studentId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    assertSelf(user, studentId);
+    const dto = zparse(solveJobBody, body);
+    return this.features.solveText(studentId, dto.correctedText, dto.subjectId);
+  }
+
   @Post('ocr/:studentId/:jobId/solve')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions('learn')

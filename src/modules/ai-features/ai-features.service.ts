@@ -128,6 +128,21 @@ export class AiFeaturesService {
     return { job, simulated: res.simulated };
   }
 
+  /** Solves a typed problem (no photo, nothing stored). */
+  async solveText(studentId: string, text: string, subjectId?: string) {
+    const subject = subjectId
+      ? await this.store.find<Subject & Entity>(CURRICULUM('subjects'), subjectId)
+      : undefined;
+    await this.usage.consume(studentId, 'ai');
+    const res = await this.ai.solveText({ text, subject_hint: subject?.name.en, language: 'bn' });
+    return {
+      steps: res.steps,
+      answer: res.answer,
+      explanation: res.explanation,
+      simulated: res.simulated,
+    };
+  }
+
   /** Solves the (corrected) text of a photo-solver job and stores the solution on it. */
   async solveJob(
     studentId: string,
