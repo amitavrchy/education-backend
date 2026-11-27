@@ -15,17 +15,21 @@ import { CurrentUser, RequirePermissions } from '../../common/decorators/index.j
 import { invalid } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { zparse } from '../../common/utils/zod.util.js';
-import { INGESTION_STAGES } from '../../contracts/operations.js';
 import { AuditLogsService } from '../audit-logs/audit-logs.service.js';
 import { RecordStoreService } from '../records/record-store.service.js';
 import { UploadsService } from '../uploads/uploads.service.js';
+import { documentType } from './document-text.service.js';
 import { IngestionService } from './ingestion.service.js';
 
-const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_BYTES = 200 * 1024 * 1024;
 const startBody = z.object({
   bookId: z.string().min(1).max(160),
   bookTitle: z.string().min(1).max(300),
-  failAt: z.enum(INGESTION_STAGES).optional(),
+  publisher: z.string().trim().max(200).optional(),
+  edition: z.string().trim().max(120).optional(),
+  licenseType: z.enum(['open_license', 'publisher_license', 'unknown']).optional(),
+  licenseHolder: z.string().trim().max(200).optional(),
+  licenseNote: z.string().trim().max(500).optional(),
 });
 
 @ApiTags('ingestion')
@@ -43,7 +47,9 @@ export class IngestionController {
   @RequirePermissions('kb.manage', 'books.manage')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES } }))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload a book PDF/text file and start its ingestion job' })
+  @ApiOperation({
+    summary: 'Upload a book or document (PDF, photo, Word, Excel, text) and start its ingestion job',
+  })
   async upload(
     @UploadedFile()
     file: { originalname: string; mimetype: string; size: number; buffer: Buffer } | undefined,
@@ -51,10 +57,10 @@ export class IngestionController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     if (!file) invalid('NO_FILE');
-    if (!['application/pdf', 'text/plain', 'text/markdown'].includes(file.mimetype))
-      invalid('UNSUPPORTED_FILE', undefined, 415);
+    const mimeType = documentType(file);
+    if (!mimeType) invalid('UNSUPPORTED_FILE', undefined, 415);
     const dto = zparse(startBody, body);
-    const stored = await this.uploads.store(file, {
+    const stored = await this.uploads.store({ ...file, mimetype: mimeType }, {
       category: file.mimetype === 'application/pdf' ? 'BOOK' : 'OTHER',
       uploadedById: user.id,
     });
@@ -65,7 +71,23 @@ export class IngestionController {
       fileName: file.originalname,
       fileSizeKb: Math.round(file.size / 1024),
       fileId: stored.id,
-      failAt: dto.failAt,
+      mimeType,
+      bookPatch: {
+        ...(dto.publisher ? { publisher: dto.publisher } : {}),
+        ...(dto.edition ? { edition: dto.edition } : {}),
+        ...(dto.licenseType
+          ? {
+              provenance: 'licensed_sample' as const,
+              license: {
+                type: dto.licenseType,
+                holder: dto.licenseHolder ?? dto.publisher ?? '',
+                downloadAllowed: false,
+                printAllowed: false,
+                note: dto.licenseNote ?? '',
+              },
+            }
+          : {}),
+      },
     });
     await this.store.insert({ collection: 'ingestionJobs', scope: '' }, job);
     await this.audit.record({

@@ -217,6 +217,86 @@ export class AiFeaturesService {
     return { questions: drafts, simulated: res.simulated };
   }
 
+  /**
+   * Questions found in an imported document's text (question papers, worksheets, banks), mapped to
+   * the subject's chapters. Drafts only — the admin reviews them and saves the ones to keep.
+   */
+  async extractQuestions(input: { subjectId: string; text: string; language: 'bn' | 'en' | 'mixed' }) {
+    const subject =
+      (await this.store.find<Subject & Entity>(CURRICULUM('subjects'), input.subjectId)) ??
+      notFound('Subject');
+    const chapters = await this.store.all<Chapter & Entity>(CURRICULUM('chapters'), 'all', {
+      filters: { subjectId: [subject.id] },
+    });
+    chapters.sort((a, b) => a.number - b.number);
+    const byId = new Map(chapters.map((c) => [c.id, c]));
+    // Long documents are sent in parts (at paragraph boundaries) so no question is cut in half.
+    const parts: string[] = [];
+    let cur = '';
+    for (const para of input.text.split(/\n{2,}/)) {
+      if (cur && cur.length + para.length > 24_000) {
+        parts.push(cur);
+        cur = '';
+      }
+      cur = cur ? `${cur}\n\n${para}` : para;
+    }
+    if (cur.trim()) parts.push(cur);
+    const now = nowIso();
+    const questions: Question[] = [];
+    let simulated = false;
+    for (const text of parts.slice(0, 6)) {
+      const res = await this.ai.extractQuestions({
+        text,
+        subject: `${subject.name.bn} (${subject.name.en})`,
+        chapters: chapters.map((c) => ({ id: c.id, title: `${c.title.bn} (${c.title.en})` })),
+        language: input.language,
+        max_questions: 60,
+      });
+      simulated ||= res.simulated;
+      for (const g of res.questions) {
+        const chapter = byId.get(g.chapter_id);
+        const objective = g.type === 'mcq' || g.type === 'true_false';
+        questions.push({
+          id: RecordStoreService.newId('q'),
+          type: g.type,
+          levelCode: subject.levelCode,
+          subjectId: subject.id,
+          chapterId: chapter?.id ?? '',
+          stem: g.stem,
+          options: g.type === 'mcq' ? g.options : undefined,
+          correctOptionId: g.type === 'mcq' && g.correct_option_id ? g.correct_option_id : undefined,
+          correctBoolean:
+            g.type === 'true_false' ? /^(true|সত্য|ঠিক|হ্যাঁ|t)\b/i.test(g.answer.trim()) : undefined,
+          cqParts:
+            g.type === 'creative'
+              ? g.cq_parts.map((p) => ({
+                  label: p.label as 'ক',
+                  level: p.level as 'knowledge',
+                  prompt: p.question,
+                  answer: p.answer,
+                  marks: p.marks,
+                }))
+              : undefined,
+          answer: g.answer,
+          explanation: g.explanation,
+          marks: objective ? Math.max(1, Math.min(g.marks, 2)) : g.marks,
+          difficulty: g.difficulty,
+          source: { kind: 'teacher', label: 'Imported document' },
+          provenance: 'user_generated',
+          verification: 'unverified',
+          examRelevance: chapter?.examRelevance ?? 'medium',
+          frequency: 1,
+          tags: ['imported'],
+          status: 'draft',
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+    return { questions, simulated, truncated: parts.length > 6 };
+  }
+
   private toQuestion(
     g: GeneratedQuestion,
     subject: Subject,

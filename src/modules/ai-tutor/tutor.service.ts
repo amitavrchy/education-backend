@@ -11,8 +11,10 @@ import type {
 } from '../../contracts/learning.js';
 import type { Question } from '../../contracts/question.js';
 import { citation, relatedQuestions, retrieve, titleFrom } from '../../domain/retrieval.js';
+import { PrismaService } from '../../database/prisma/prisma.service.js';
 import { AiServiceClient, aiPassage } from '../../integrations/ai-service/ai-service.client.js';
 import { UsageService } from '../billing/usage.service.js';
+import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { ProgressService } from '../progress/progress.service.js';
 import { RecordStoreService, type Entity, type Where } from '../records/record-store.service.js';
 
@@ -60,7 +62,18 @@ export class TutorService {
     private readonly usage: UsageService,
     private readonly progress: ProgressService,
     private readonly aiService: AiServiceClient,
+    private readonly knowledgeBase: KnowledgeService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  /** Query embedding + passage vectors for hybrid retrieval (null → keyword only). */
+  private async semantic(query: string) {
+    const [vec, vectors] = await Promise.all([
+      this.knowledgeBase.embedQuery(query),
+      this.knowledgeBase.vectors(),
+    ]);
+    return vec && vectors.size ? { query: vec, vectors } : null;
+  }
 
   private async knowledge() {
     if (this.cache && Date.now() - this.cache.at < CACHE_MS) return this.cache;
@@ -88,7 +101,7 @@ export class TutorService {
       mode: 'simple',
       ...context,
     };
-    return retrieve(query, ctx, passages).map((r) => ({ passage: r.p, score: r.score }));
+    return retrieve(query, ctx, passages, await this.semantic(query)).map((r) => ({ passage: r.p, score: r.score }));
   }
 
   private conversations(studentId: string) {
@@ -105,7 +118,7 @@ export class TutorService {
     history: ChatMessage[],
   ): Promise<Generated> {
     const { passages, archived } = await this.knowledge();
-    const found = retrieve(query, context, passages);
+    const found = retrieve(query, context, passages, await this.semantic(query));
     const filters: Where = context.subjectId
       ? { subjectId: [context.subjectId], status: ['published'] }
       : { levelCode: [context.levelCode], status: ['published'] };
@@ -287,5 +300,37 @@ export class TutorService {
     const updated = { ...msg, reported: true };
     await this.store.replace(msgRef, updated);
     return updated;
+  }
+
+  /** A conversation its owner shared by link (read-only; the name only if they chose to show it). */
+  async shared(linkId: string) {
+    const rows = await this.prisma.$queryRaw<{ scope: string; data: Conversation }[]>`
+      SELECT "scope", "data" FROM "records" WHERE "collection" = 'conversations'
+      AND "data"->'share'->>'linkId' = ${linkId} AND ("data"->'share'->>'enabled')::boolean = true LIMIT 1`;
+    const row = rows[0];
+    if (!row) notFound('Conversation');
+    const studentId = row.scope;
+    const messages = await this.store.all<ChatMessage & Entity>(this.messages(studentId), 'all', {
+      filters: { conversationId: [row.data.id] },
+    });
+    messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let name: string | undefined;
+    if (row.data.share.includeName) {
+      const user = await this.store.find<{ name: string } & Entity>({ collection: 'users', scope: '' }, studentId);
+      name = user?.name;
+    }
+    return {
+      title: row.data.title,
+      sharedBy: name,
+      createdAt: row.data.createdAt,
+      messages: messages
+        .filter((m) => m.status === 'complete')
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+          citations: m.citations.map((c) => ({ bookTitle: c.bookTitle, chapterTitle: c.chapterTitle, page: c.page })),
+        })),
+    };
   }
 }

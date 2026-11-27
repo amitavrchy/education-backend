@@ -1,9 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ClientContext, CurrentUser, Public } from '../../common/decorators/index.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
+import { z } from 'zod';
+import { zparse } from '../../common/utils/zod.util.js';
 import { AuthService } from './auth.service.js';
+
+const twoFactorBody = z.object({ enabled: z.boolean() });
+const changePasswordBody = z.object({ current: z.string().min(1).max(200), next: z.string().min(8).max(200) });
 import {
   ForgotPasswordDto,
   LoginDto,
@@ -128,5 +133,38 @@ export class AuthController {
   @ApiOperation({ summary: 'Demo mode only: demo accounts for the login quick-picker' })
   demoAccounts() {
     return this.auth.demoAccounts();
+  }
+
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('change-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Change my password (other sessions are signed out)' })
+  async changePassword(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
+    const dto = zparse(changePasswordBody, body);
+    await this.auth.changePassword(user, dto.current, dto.next);
+  }
+
+  @ApiBearerAuth()
+  @Get('sessions')
+  @ApiOperation({ summary: 'My active sign-ins' })
+  sessions(@CurrentUser() user: AuthenticatedUser) {
+    return this.auth.sessions(user);
+  }
+
+  @ApiBearerAuth()
+  @Delete('sessions/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Sign out one of my sessions' })
+  async revokeSession(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    await this.auth.revokeSession(user, id);
+  }
+
+  @ApiBearerAuth()
+  @Post('two-factor')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Turn two-step verification (OTP after the password) on or off' })
+  twoFactor(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
+    return this.auth.setTwoFactor(user, zparse(twoFactorBody, body).enabled);
   }
 }

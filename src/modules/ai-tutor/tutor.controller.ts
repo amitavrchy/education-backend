@@ -1,9 +1,9 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { CurrentUser, RequirePermissions } from '../../common/decorators/index.js';
+import { CurrentUser, Public, RequirePermissions } from '../../common/decorators/index.js';
 import { AppException } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { zparse } from '../../common/utils/zod.util.js';
@@ -133,5 +133,13 @@ export class TutorController {
       subjectId: dto.subjectId,
       chapterId: dto.chapterId,
     });
+  }
+
+  @Public()
+  @Get('shared/:linkId')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Public: a tutor conversation shared by link (read-only)' })
+  shared(@Param('linkId') linkId: string) {
+    return this.tutor.shared(linkId);
   }
 }

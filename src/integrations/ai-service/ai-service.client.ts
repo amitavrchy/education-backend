@@ -8,6 +8,68 @@ import { integrationsConfig, type IntegrationsConfig } from '../../config/index.
  * Field names follow the service's snake_case JSON.
  */
 
+export interface ExtractedPage {
+  page: number;
+  heading: string;
+  text: string;
+}
+
+export interface ExtractResult {
+  page_count: number;
+  start_page: number;
+  end_page: number;
+  pages: ExtractedPage[];
+  chapters: { title: string; page: number }[];
+  failed_pages: number[];
+  method: 'vision' | 'text';
+  simulated: boolean;
+  model: string;
+}
+
+export type DocumentType =
+  | 'application/pdf'
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp'
+  | 'text/plain'
+  | 'text/markdown'
+  | 'text/csv'
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+export interface ExtractedQuestion {
+  type:
+    | 'mcq'
+    | 'short'
+    | 'descriptive'
+    | 'creative'
+    | 'numerical'
+    | 'true_false'
+    | 'fill_blank'
+    | 'definition';
+  stem: string;
+  options: { id: string; text: string }[];
+  correct_option_id: string;
+  cq_parts: { label: string; level: string; question: string; answer: string; marks: number }[];
+  answer: string;
+  explanation: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  marks: number;
+  chapter_id: string;
+}
+
+export interface PronunciationResult {
+  transcript: string;
+  accuracy: number;
+  fluency: number;
+  completeness: number;
+  words: { word: string; ok: boolean; heard: string; tip: string }[];
+  tips: string[];
+  score: number;
+  simulated: boolean;
+  model: string;
+}
+
 export interface AiPassage {
   id: string;
   book_title: string;
@@ -137,7 +199,7 @@ export class AiServiceClient {
     return this.config.ai.provider === 'service';
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, timeoutMs?: number): Promise<T> {
     if (!this.enabled) invalid('AI_NOT_CONFIGURED', undefined, HttpStatus.SERVICE_UNAVAILABLE);
     let res: Response;
     try {
@@ -148,7 +210,7 @@ export class AiServiceClient {
           'x-internal-key': this.config.ai.serviceKey ?? '',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.config.ai.serviceTimeoutMs),
+        signal: AbortSignal.timeout(timeoutMs ?? this.config.ai.serviceTimeoutMs),
       });
     } catch (error) {
       this.logger.error({ err: error, path }, 'AI service unreachable');
@@ -279,6 +341,7 @@ export class AiServiceClient {
     passages: AiPassage[];
     count: number;
     language: Lang;
+    source_text?: string;
   }) {
     return this.post<FlashcardsResult>('/v1/study/flashcards', input);
   }
@@ -307,6 +370,101 @@ export class AiServiceClient {
     max_words: number;
   }) {
     return this.post<WritingResult>('/v1/english/writing', input);
+  }
+
+  extract(input: {
+    media_type: DocumentType;
+    data: string;
+    start_page?: number;
+    max_pages?: number;
+    page_offset?: number;
+    language?: Lang;
+  }) {
+    // A batch the model fails on is re-read page by page, which can take several minutes.
+    return this.post<ExtractResult>('/v1/documents/extract', input, 900_000);
+  }
+
+  extractQuestions(input: {
+    text: string;
+    subject: string;
+    chapters: { id: string; title: string }[];
+    language: Lang;
+    max_questions: number;
+  }) {
+    return this.post<{ questions: ExtractedQuestion[]; simulated: boolean; model: string }>(
+      '/v1/documents/questions',
+      input,
+    );
+  }
+
+  mapChapters(input: {
+    headings: { title: string; page: number }[];
+    chapters: { id: string; title: string }[];
+  }) {
+    return this.post<{ matches: { chapter_id: string; page: number }[]; simulated: boolean }>(
+      '/v1/documents/chapters',
+      input,
+    );
+  }
+
+  grade(input: {
+    items: { id: string; question: string; model_answer: string; answer: string; max_marks: number }[];
+    subject: string;
+    language: Lang;
+  }) {
+    return this.post<{
+      items: { id: string; marks: number; feedback: string; confidence: number }[];
+      simulated: boolean;
+      model: string;
+    }>('/v1/grade', input);
+  }
+
+  pronunciation(input: {
+    target: string;
+    audio?: { media_type: string; data: string };
+    transcript?: string;
+  }) {
+    return this.post<PronunciationResult>('/v1/english/pronunciation', input);
+  }
+
+  plan(input: {
+    goal: string;
+    exam_date?: string;
+    start_date: string;
+    days: number;
+    minutes_per_day: number;
+    weak_chapters: { id: string; subject: string; title: string; mastery: number }[];
+    chapters: { id: string; subject: string; title: string; mastery: number }[];
+    language: Lang;
+  }) {
+    return this.post<{
+      summary: string;
+      tasks: { date: string; chapter_id: string; kind: string; title: string; minutes: number }[];
+      simulated: boolean;
+      model: string;
+    }>('/v1/study/plan', input);
+  }
+
+  embed(texts: string[]) {
+    return this.post<{ model: string; dimensions: number; vectors: number[][] }>('/v1/embed', {
+      texts,
+    });
+  }
+}
+
+/**
+ * Runs an AI call, waiting and retrying while the model provider reports a rate limit (free-tier
+ * quotas are per minute). For background work such as book ingestion and embedding.
+ */
+export async function retryRateLimited<T>(fn: () => Promise<T>, waitMs = 45_000, retries = 8): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== 'UPSTREAM_RATE_LIMITED' || attempt >= retries) throw error;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
   }
 }
 

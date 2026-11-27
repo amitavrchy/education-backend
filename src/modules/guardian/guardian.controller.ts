@@ -15,6 +15,11 @@ const confirmBody = z.object({
   code: z.string().min(4).max(8),
 });
 const replyBody = z.object({ message: z.string().min(1).max(2000) });
+const reportBody = z.object({
+  studentId: z.string().min(1).max(120),
+  title: z.string().min(1).max(200),
+  lines: z.array(z.string().max(1000)).max(60),
+});
 
 @ApiTags('guardian')
 @ApiBearerAuth()
@@ -71,5 +76,14 @@ export class GuardianController {
   @RequirePermissions('guardian.view')
   reply(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
     return this.guardian.replyToTeacher(user, id, zparse(replyBody, body).message);
+  }
+
+  @Post('report-email')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('guardian.view')
+  @ApiOperation({ summary: "Email a child's report to my own address" })
+  report(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
+    const dto = zparse(reportBody, body);
+    return this.guardian.emailReport(user, dto.studentId, dto.title, dto.lines);
   }
 }

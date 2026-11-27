@@ -43,6 +43,13 @@ export class AdminController {
     return this.admin.series(Math.max(1, Math.min(365, days)));
   }
 
+  @Get('analytics/breakdowns')
+  @RequirePermissions('analytics.view')
+  @ApiOperation({ summary: 'MAU, revenue by plan, churn, AI tokens, retention cohorts, subject engagement' })
+  breakdowns(@Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number) {
+    return this.admin.breakdowns(Math.max(1, Math.min(365, days)));
+  }
+
   @Get('analytics/overview')
   @RequirePermissions('admin.access', 'analytics.view')
   overview() {

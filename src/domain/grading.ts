@@ -125,6 +125,8 @@ export function scoreAttempt(
   questions: Question[],
   attempt: Pick<ExamAttempt, 'answers' | 'timePerQuestion' | 'questionOrder' | 'startedAt'>,
   submittedAt = new Date().toISOString(),
+  /** AI examiner marks for written answers (raw, out of the question's marks), by question id. */
+  written?: Map<string, { marks: number; feedback: string }>,
 ): ExamResult {
   const byId = new Map(questions.map((q) => [q.id, q]));
   const ordered = attempt.questionOrder.map((id) => byId.get(id)).filter((q): q is Question => !!q);
@@ -150,15 +152,14 @@ export function scoreAttempt(
       negative += exam.negativeMarking;
       return { ...base, status: 'incorrect' as const, awarded: 0 };
     }
-    const est = estimateWritten(
-      q,
-      a?.text ?? (a?.uploadNames?.length ? q.answer.slice(0, 40) : ''),
-    );
+    const ai = written?.get(q.id);
+    const est = ai ?? estimateWritten(q, a?.text ?? '');
+    const by = ai ? ('ai' as const) : ('estimate' as const);
     return {
       ...base,
       status: 'pending_review' as const,
       awarded: +(est.marks * scale).toFixed(2),
-      aiEstimate: { marks: +(est.marks * scale).toFixed(2), feedback: est.feedback },
+      aiEstimate: { marks: +(est.marks * scale).toFixed(2), feedback: est.feedback, by },
     };
   });
   const score = Math.max(0, +(results.reduce((s, r) => s + r.awarded, 0) - negative).toFixed(2));
@@ -214,7 +215,8 @@ export function scoreAttempt(
     recommendedChapterIds: [
       ...new Set(byTopic.filter((t) => weakTopicIds.includes(t.topicId)).map((t) => t.chapterId)),
     ],
-    containsSimulatedGrading: pendingReview > 0,
+    containsSimulatedGrading: results.some((r) => r.aiEstimate?.by === 'estimate'),
+    aiGraded: results.some((r) => r.aiEstimate?.by === 'ai'),
   };
 }
 

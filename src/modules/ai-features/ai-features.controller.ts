@@ -35,6 +35,11 @@ const generateBody = z.object({
 });
 
 const lang = z.enum(['bn', 'en', 'mixed']).default('bn');
+const extractBody = z.object({
+  subjectId: z.string().min(1).max(120),
+  text: z.string().trim().min(1).max(200_000),
+  language: lang,
+});
 const voiceBody = z.object({
   text: z.string().trim().min(1).max(2000),
   mode: z.enum(['tutor', 'oral_exam']).default('tutor'),
@@ -50,9 +55,32 @@ const audioBody = z.object({
   chapterId: z.string().min(1).max(160),
   minutes: z.number().int().min(2).max(15).default(5),
 });
-const flashcardsBody = z.object({
-  chapterId: z.string().min(1).max(160),
-  count: z.number().int().min(3).max(30).default(10),
+const flashcardsBody = z
+  .object({
+    chapterId: z.string().min(1).max(160).optional(),
+    count: z.number().int().min(3).max(30).default(10),
+    sourceText: z.string().max(30_000).optional(),
+    title: z.string().max(300).optional(),
+  })
+  .refine((b) => b.chapterId || b.sourceText?.trim(), { message: 'chapterId or sourceText is required' });
+const pronunciationBody = z
+  .object({
+    target: z.string().trim().min(1).max(600),
+    /** `data:audio/webm;base64,...` recording (≤ ~10 MB). */
+    audio: z.string().max(14_000_000).optional(),
+    transcript: z.string().max(2000).optional(),
+  })
+  .refine((b) => b.audio || b.transcript?.trim(), { message: 'audio or transcript is required' });
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const planBody = z.object({
+  subjectIds: z.array(z.string().max(120)).min(1).max(20),
+  weakChapterIds: z.array(z.string().max(160)).max(100).default([]),
+  examDate: day.optional(),
+  startDate: day,
+  days: z.number().int().min(1).max(28).default(14),
+  dailyMinutes: z.number().int().min(15).max(600).default(90),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).default('18:00'),
+  goal: z.string().max(500).optional(),
 });
 const noteBody = z.object({
   kind: z
@@ -120,15 +148,16 @@ export class AiFeaturesController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions('learn')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Flashcard drafts for a chapter (the app saves the kept ones)' })
+  @ApiOperation({
+    summary: 'Flashcard drafts for a chapter or from a note/conversation (the app saves the kept ones)',
+  })
   flashcards(
     @Param('studentId') studentId: string,
     @Body() body: unknown,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     assertSelf(user, studentId);
-    const dto = zparse(flashcardsBody, body);
-    return this.study.flashcards(studentId, dto.chapterId, dto.count);
+    return this.study.flashcards(studentId, zparse(flashcardsBody, body));
   }
 
   @Post('notes/:studentId/generate')
@@ -229,5 +258,40 @@ export class AiFeaturesController {
   })
   generate(@Body() body: unknown) {
     return this.features.generateQuestions(zparse(generateBody, body));
+  }
+
+  @Post('questions/extract')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('content.create', 'questions.manage')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Questions found in a document\'s text (from /document-text), mapped to chapters (drafts, not saved)',
+  })
+  extractQuestions(@Body() body: unknown) {
+    return this.features.extractQuestions(zparse(extractBody, body));
+  }
+
+  @Post('english/:studentId/pronunciation')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('learn')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Pronunciation score of a read sentence (recording or transcript), word by word' })
+  pronunciation(
+    @Param('studentId') studentId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    assertSelf(user, studentId);
+    return this.study.pronunciation(studentId, zparse(pronunciationBody, body));
+  }
+
+  @Post('planner/:studentId/generate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('learn')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'AI study plan (StudyTask[], not saved), weighted towards weak chapters' })
+  plan(@Param('studentId') studentId: string, @Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
+    assertSelf(user, studentId);
+    return this.study.plan(studentId, zparse(planBody, body));
   }
 }

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { invalid } from '../../common/exceptions/app.exception.js';
+import { invalid, notFound } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import type { SystemConfig } from '../../contracts/operations.js';
 import type { StudentProfile, UserAccount } from '../../contracts/people.js';
@@ -246,9 +246,27 @@ export class AuthService {
       invalid('WRONG_PASSWORD', { password: ['WRONG_PASSWORD'] });
     }
     this.assertUsable(cred);
+    // Two-step verification: the password is right, now a one-time code completes the sign-in.
+    const account = await this.account(cred.id);
+    if ((account as { twoFactor?: boolean } | undefined)?.twoFactor) {
+      const pending = await this.sendOtp('login', input.identifier.trim().toLowerCase(), { userId: cred.id }, !!input.remember);
+      return { otpRequired: true as const, ...pending };
+    }
     const session = await this.issueSession(cred, !!input.remember, client);
     this.events.emit(DOMAIN_EVENTS.USER_SIGNED_IN, { userId: cred.id });
     return session;
+  }
+
+  /** Turns two-step verification (a code on every password sign-in) on or off. */
+  async setTwoFactor(user: AuthenticatedUser, enabled: boolean) {
+    await this.touchAccount(user.id, { twoFactor: enabled });
+    await this.audit.record({
+      actor: { id: user.id, role: user.role },
+      category: 'security',
+      action: enabled ? 'auth.2fa_enabled' : 'auth.2fa_disabled',
+      target: { type: 'User', id: user.id, label: user.id },
+    });
+    return { twoFactor: enabled };
   }
 
   private async passwordMatches(cred: Credential | null, password: string): Promise<boolean> {
@@ -561,6 +579,55 @@ export class AuthService {
       action: 'auth.password_reset',
       target: { type: 'User', id: userId, label: row.target },
     });
+  }
+
+  // ── Signed-in account security ─────────────────────────────────────────
+
+  /** Changes the password after checking the current one; other sessions are signed out. */
+  async changePassword(user: AuthenticatedUser, current: string, next: string) {
+    if (next.length < 8) invalid('PASSWORD_TOO_SHORT', { next: ['PASSWORD_TOO_SHORT'] });
+    const row = await this.prisma.user.findUnique({ where: { id: user.id } });
+    if (!row) notFound('User');
+    const ok = await this.passwordMatches(row, current);
+    if (!ok) invalid('WRONG_PASSWORD', { current: ['WRONG_PASSWORD'] });
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash: await this.hasher.hash(next) } }),
+      this.prisma.userSession.updateMany({
+        where: { userId: user.id, revokedAt: null, ...(user.sessionId ? { id: { not: user.sessionId } } : {}) },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    await this.audit.record({
+      actor: { id: user.id, role: user.role },
+      category: 'security',
+      action: 'auth.password_changed',
+      target: { type: 'User', id: user.id, label: row.email ?? row.phone ?? user.id },
+    });
+  }
+
+  /** The user's active sign-ins (device, approximate place, last use). */
+  async sessions(user: AuthenticatedUser) {
+    const rows = await this.prisma.userSession.findMany({
+      where: { userId: user.id, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: [{ lastUsedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 20,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      userAgent: r.userAgent ?? '',
+      ipAddress: r.ipAddress ?? '',
+      createdAt: r.createdAt.toISOString(),
+      lastUsedAt: (r.lastUsedAt ?? r.createdAt).toISOString(),
+      current: r.id === user.sessionId,
+    }));
+  }
+
+  async revokeSession(user: AuthenticatedUser, id: string) {
+    const res = await this.prisma.userSession.updateMany({
+      where: { id, userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (!res.count) notFound('Session');
   }
 
   // ── Misc ───────────────────────────────────────────────────────────────

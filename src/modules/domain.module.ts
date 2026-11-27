@@ -9,6 +9,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { DocumentProcessingModule } from './document-processing/document-processing.module.js';
 import { ExamsModule } from './exams/exams.module.js';
+import { KnowledgeModule } from './knowledge/knowledge.module.js';
 import { GuardianModule } from './guardian/guardian.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ProgressModule } from './progress/progress.module.js';
@@ -16,6 +17,7 @@ import { QuestionGenerationModule } from './question-generation/question-generat
 import { RecordsModule } from './records/records.module.js';
 import { ReviewModule } from './review/review.module.js';
 import { SearchModule } from './search/search.module.js';
+import { SocialModule } from './social/social.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -32,6 +34,7 @@ import { UsersModule } from './users/users.module.js';
     NotificationsModule,
     UsersModule,
     UploadsModule,
+    KnowledgeModule,
     ProgressModule,
     BillingModule,
     ExamsModule,
@@ -45,6 +48,7 @@ import { UsersModule } from './users/users.module.js';
     DocumentProcessingModule,
     SearchModule,
     StaffModule,
+    SocialModule,
     AdminModule,
     RecordsModule,
   ],

@@ -1,11 +1,13 @@
 import { randomInt } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { invalid, notFound } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { dateKey, nowIso } from '../../common/utils/dates.js';
 import type { ExamAttempt } from '../../contracts/assessment.js';
 import type { GuardianLink, TeacherFeedback, UserAccount } from '../../contracts/people.js';
 import type { ActivityEntry, StudyTask, TopicMastery } from '../../contracts/study.js';
+import { PrismaService } from '../../database/prisma/prisma.service.js';
+import { EMAIL_PROVIDER, type EmailProvider } from '../../integrations/email/email.module.js';
 import { AuthService } from '../auth/auth.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ProgressService } from '../progress/progress.service.js';
@@ -43,6 +45,8 @@ export class GuardianService {
     private readonly auth: AuthService,
     private readonly progress: ProgressService,
     private readonly notifications: NotificationsService,
+    private readonly prisma: PrismaService,
+    @Inject(EMAIL_PROVIDER) private readonly email: EmailProvider,
   ) {}
 
   /** Student: issue (or reuse) a share code valid for 7 days. */
@@ -260,5 +264,27 @@ export class GuardianService {
       ownerField: 'studentId',
     });
     return updated;
+  }
+
+  /** Emails a child's progress report (as shown to the guardian) to the guardian's own address. */
+  async emailReport(guardian: AuthenticatedUser, studentId: string, title: string, lines: string[]) {
+    const link = (await this.links(guardian.id)).find((l) => l.studentId === studentId && l.status === 'active');
+    if (!link) notFound('GuardianLink');
+    const me = await this.prisma.user.findUnique({ where: { id: guardian.id }, select: { email: true } });
+    if (!me?.email) invalid('NO_EMAIL', { email: ['NO_EMAIL'] }, 422);
+    const esc = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+    try {
+      await this.email.send({
+        to: me.email,
+        subject: title,
+        text: lines.join('\n'),
+        html: `<div style="font-family:sans-serif;line-height:1.7"><h2 style="margin:0 0 12px">${esc(title)}</h2>${lines
+          .map((x) => (x ? `<p style="margin:0">${esc(x)}</p>` : '<br>'))
+          .join('')}<p style="color:#888;font-size:12px;margin-top:16px">ShikkhaAI</p></div>`,
+      });
+    } catch {
+      invalid('EMAIL_FAILED', undefined, 503);
+    }
+    return { sentTo: me.email };
   }
 }

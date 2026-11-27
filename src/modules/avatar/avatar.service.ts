@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { invalid, notFound } from '../../common/exceptions/app.exception.js';
 import { nowIso } from '../../common/utils/dates.js';
 import type { Topic } from '../../contracts/curriculum.js';
-import type { Book } from '../../contracts/learning.js';
+import type { Book, SourcePassage, TutorContext } from '../../contracts/learning.js';
 import {
   defaultAvatarFor,
   scopeChapters,
@@ -11,7 +11,9 @@ import {
   type AvatarCitation,
   type BookAvatar,
 } from '../../domain/avatar/book-pages.js';
+import { retrieve } from '../../domain/retrieval.js';
 import { AiServiceClient } from '../../integrations/ai-service/ai-service.client.js';
+import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { RecordStoreService, type Entity } from '../records/record-store.service.js';
 
 export interface AvatarAnswer {
@@ -86,7 +88,50 @@ export class AvatarService {
   constructor(
     private readonly store: RecordStoreService,
     private readonly ai: AiServiceClient,
+    private readonly knowledge: KnowledgeService,
   ) {}
+
+  /**
+   * Pages of an ingested book that answer the question: hybrid (keyword + embedding) search over the
+   * book's passages, grouped by page; each candidate carries the page's full text.
+   */
+  private async storedPages(book: Book, avatar: BookAvatar, topics: Topic[], query: string, lang: 'bn' | 'en') {
+    const pages = await this.knowledge.pages(book.id);
+    if (!pages.length) return null;
+    const scope = scopeChapters({ book, avatar, topics, query });
+    const inScope = (n: number) => scope.some((c) => n >= c.startPage && n <= c.endPage);
+    const passages = (
+      await this.store.all<Row<SourcePassage>>({ collection: 'kbPassages', scope: '' }, 'all', {
+        filters: { documentId: [book.id] },
+      })
+    ).filter((p) => inScope(p.page));
+    const [vec, vectors] = await Promise.all([this.knowledge.embedQuery(query), this.knowledge.vectors()]);
+    const ctx = {
+      levelCode: book.levelCode,
+      grade: 10,
+      curriculumVersionId: book.curriculumVersionId,
+      language: lang,
+      mode: 'simple',
+    } as TutorContext;
+    const hits = retrieve(query, ctx, passages, vec ? { query: vec, vectors } : null, 12);
+    const byPage = new Map<number, number>();
+    for (const h of hits) byPage.set(h.p.page, Math.max(byPage.get(h.p.page) ?? 0, h.score));
+    return [...byPage.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([n, score]) => {
+        const page = pages.find((p) => p.pageNumber === n);
+        const ref = book.chapters.find((c) => n >= c.startPage && n <= c.endPage);
+        return {
+          page: n,
+          score,
+          heading: page?.heading || undefined,
+          chapterTitle: ref ? (lang === 'en' ? ref.title.en : ref.title.bn) : '',
+          chapterId: ref?.chapterId,
+          excerpt: (page?.body ?? '').slice(0, 2400),
+        };
+      });
+  }
 
   /** Finds the book pages for the question here; the AI service writes the answer from them. */
   private async compose(
@@ -97,7 +142,9 @@ export class AvatarService {
     history: AvatarMessage[] = [],
   ): Promise<AvatarAnswer> {
     const lang = /[ঀ-৿]/.test(query) ? 'bn' : /[a-z]/i.test(query) ? 'en' : avatar.voice.language;
-    const pages = searchPages({ book, avatar, topics, query }, tokens(query), lang).slice(0, 5);
+    const pages =
+      (await this.storedPages(book, avatar, topics, query, lang)) ??
+      searchPages({ book, avatar, topics, query }, tokens(query), lang).slice(0, 5);
     const res = await this.ai.avatarAnswer({
       query,
       book_title: lang === 'en' ? book.title.en : book.title.bn,
@@ -134,7 +181,7 @@ export class AvatarService {
           page: p.page,
           chapterTitle: p.chapterTitle,
           heading: p.heading,
-          excerpt: p.excerpt,
+          excerpt: p.excerpt.replace(/^#+\s*/gm, '').slice(0, 260),
         })),
       grounded: res.grounded,
       followUps: res.follow_ups,

@@ -26,6 +26,34 @@ export function onlyFields(existing: Entity, next: Entity, allowed: string[]): v
 
 const PRIVILEGED_ROLES = ['platform_admin', 'super_admin'];
 
+const ROLE_BN: Record<string, string> = {
+  student: 'শিক্ষার্থী',
+  parent: 'অভিভাবক',
+  teacher: 'শিক্ষক',
+  content_reviewer: 'কনটেন্ট রিভিউয়ার',
+  content_manager: 'কনটেন্ট ম্যানেজার',
+  institution_admin: 'প্রতিষ্ঠান অ্যাডমিন',
+  support_agent: 'সাপোর্ট',
+  finance_admin: 'ফিন্যান্স অ্যাডমিন',
+  platform_admin: 'প্ল্যাটফর্ম অ্যাডমিন',
+  super_admin: 'সুপার অ্যাডমিন',
+};
+
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** Invitation email: the invitee sets a password through "forgot password" with this address. */
+async function sendInvite(data: Entity, ctx: HookContext) {
+  const email = String(data.email);
+  const name = typeof data.name === 'string' ? data.name : '';
+  const role = ROLE_BN[String(data.role)] ?? String(data.role);
+  const link = `${ctx.deps.appUrl}/forgot-password?identifier=${encodeURIComponent(email)}`;
+  const text = `${name ? `${name}, ` : ''}আপনাকে ShikkhaAI-তে ${role} হিসেবে আমন্ত্রণ জানানো হয়েছে। অ্যাকাউন্ট চালু করতে এই লিংকে গিয়ে আপনার ইমেইলে আসা কোড দিয়ে পাসওয়ার্ড সেট করুন: ${link}`;
+  const html = `<div style="font-family:sans-serif;line-height:1.6"><p>${esc(name ? `${name},` : 'স্বাগতম,')}</p><p>আপনাকে <strong>ShikkhaAI</strong>-তে <strong>${esc(role)}</strong> হিসেবে আমন্ত্রণ জানানো হয়েছে।</p><p><a href="${esc(link)}" style="display:inline-block;padding:10px 16px;background:#0f766e;color:#fff;border-radius:8px;text-decoration:none">অ্যাকাউন্ট চালু করুন</a></p><p style="color:#666;font-size:13px">লিংকে গিয়ে আপনার ইমেইলে আসা কোড দিয়ে পাসওয়ার্ড সেট করুন। আমন্ত্রণটি আপনার না হলে এই ইমেইল উপেক্ষা করুন।</p></div>`;
+  const sent = await ctx.deps.sendEmail({ to: email, subject: 'ShikkhaAI-তে আমন্ত্রণ', text, html });
+  if (sent) data.invitedAt = new Date().toISOString();
+}
+
 export const usersHooks: ResourceHooks = {
   beforeCreate(data) {
     if (typeof data.email !== 'string' || !data.email.includes('@'))
@@ -66,6 +94,7 @@ export const usersHooks: ResourceHooks = {
   },
   async afterCreate(data, ctx) {
     await ctx.deps.syncCredentials(data);
+    if (data.status === 'invited' && typeof data.email === 'string') await sendInvite(data, ctx);
   },
   async afterUpdate(next, existing, ctx) {
     await ctx.deps.syncCredentials(next, existing);

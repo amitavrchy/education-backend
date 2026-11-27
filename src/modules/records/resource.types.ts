@@ -53,6 +53,10 @@ export interface HookDeps {
   deleteCredentials(id: string): Promise<void>;
   revokeUserSessions(userId: string): Promise<void>;
   startIngestion(jobId: string): Promise<void>;
+  /** Sends an email (best effort: failures are logged, never thrown). */
+  sendEmail(message: { to: string; subject: string; text: string; html: string }): Promise<boolean>;
+  /** The web app's base URL (links in emails). */
+  appUrl: string;
   institutionOfStudent(studentId: string): Promise<string | null>;
   /** In-app notification to specific users (best effort). */
   notify(

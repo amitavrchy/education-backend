@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { invalid, notFound } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { dateKey, nowIso } from '../../common/utils/dates.js';
@@ -9,6 +9,7 @@ import type { Question, QuestionType } from '../../contracts/question.js';
 import type { TopicMastery } from '../../contracts/study.js';
 import { OBJECTIVE_TYPES } from '../../contracts/question.js';
 import { filterQuestions, scoreAttempt, seededShuffle } from '../../domain/grading.js';
+import { AiServiceClient } from '../../integrations/ai-service/ai-service.client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ProgressService } from '../progress/progress.service.js';
 import { RecordStoreService, type Entity } from '../records/record-store.service.js';
@@ -122,7 +123,10 @@ export class ExamsService {
     private readonly resources: ResourcesService,
     private readonly progress: ProgressService,
     private readonly notifications: NotificationsService,
+    private readonly ai: AiServiceClient,
   ) {}
+
+  private readonly logger = new Logger(ExamsService.name);
 
   private attemptsRef(studentId: string) {
     return { collection: 'examAttempts', scope: studentId };
@@ -411,11 +415,13 @@ export class ExamsService {
     const totalMarks = exam.questionIds.length
       ? exam.totalMarks
       : questions.reduce((s, q) => s + q.marks, 0);
+    const written = await this.gradeWritten(questions, answers);
     const result = scoreAttempt(
       { ...exam, totalMarks },
       questions,
       { ...attempt, answers },
       submittedAt,
+      written,
     );
     const status = reason === 'time_expired' || late ? 'expired' : 'submitted';
     const updated: ExamAttempt = {
@@ -461,6 +467,38 @@ export class ExamsService {
       priority: 'normal',
     });
     return updated;
+  }
+
+  /**
+   * Marks the written (non-objective) answers with the AI examiner. When the AI service is
+   * unavailable the keyword estimate is used instead (flagged on the result).
+   */
+  private async gradeWritten(questions: Question[], answers: Record<string, AttemptAnswer>) {
+    const items = questions
+      .filter((q) => !OBJECTIVE_TYPES.includes(q.type) && (answers[q.id]?.text ?? '').trim())
+      .map((q) => ({
+        id: q.id,
+        question: [q.passage, q.stem, ...(q.cqParts ?? []).map((p) => `${p.label}) ${p.prompt}`)]
+          .filter(Boolean)
+          .join('\n'),
+        model_answer: [q.answer, ...(q.cqParts ?? []).map((p) => `${p.label}) ${p.answer}`)]
+          .filter(Boolean)
+          .join('\n'),
+        answer: answers[q.id].text ?? '',
+        max_marks: q.marks,
+      }));
+    if (!items.length || !this.ai.enabled) return undefined;
+    const marks = new Map<string, { marks: number; feedback: string }>();
+    try {
+      for (let i = 0; i < items.length; i += 20) {
+        const res = await this.ai.grade({ items: items.slice(i, i + 20), subject: questions[0]?.subjectId ?? '', language: 'bn' });
+        for (const g of res.items) marks.set(g.id, { marks: g.marks, feedback: g.feedback });
+      }
+    } catch (error) {
+      this.logger.warn({ err: (error as Error).message }, 'AI grading unavailable; keyword estimate used');
+      return marks.size ? marks : undefined;
+    }
+    return marks;
   }
 
   async discard(studentId: string, attemptId: string): Promise<void> {
