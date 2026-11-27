@@ -16,6 +16,7 @@ import { QuestionGenerationModule } from './question-generation/question-generat
 import { RecordsModule } from './records/records.module.js';
 import { ReviewModule } from './review/review.module.js';
 import { SearchModule } from './search/search.module.js';
+import { StaffModule } from './staff/staff.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module.js';
     QuestionGenerationModule,
     DocumentProcessingModule,
     SearchModule,
+    StaffModule,
     AdminModule,
     RecordsModule,
   ],
