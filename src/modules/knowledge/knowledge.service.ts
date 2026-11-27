@@ -8,6 +8,7 @@ export const KB_VECTORS = { collection: 'kbVectors', scope: '' };
 const PASSAGES = { collection: 'kbPassages', scope: '' };
 const EMBED_BATCH = 32;
 const QUERY_CACHE = 300;
+const BACKFILL_EVERY_MS = 3 * 60 * 60 * 1000;
 
 /** A textbook page read from an uploaded book (ingestion → extract). */
 export interface StoredBookPage {
@@ -51,6 +52,8 @@ export class KnowledgeService implements OnApplicationBootstrap {
   onApplicationBootstrap() {
     if (!this.ai.enabled || process.env.NODE_ENV === 'test') return;
     setTimeout(() => void this.backfill(), 15_000).unref();
+    // Passages left without vectors (e.g. a daily quota ran out) are retried every few hours.
+    setInterval(() => void this.backfill(), BACKFILL_EVERY_MS).unref();
   }
 
   invalidate(bookId?: string) {

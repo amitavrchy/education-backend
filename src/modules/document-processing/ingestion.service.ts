@@ -500,11 +500,21 @@ export class IngestionService {
     const passages = await this.bookPassages(job.bookId);
     const vectors = await this.knowledge.vectors();
     const missing = passages.filter((p) => !vectors.has(p.id));
-    const n = await this.knowledge.embedPassages(missing, async (done) => {
-      job.logs = job.logs.filter((l) => !l.message.startsWith('Embedding '));
-      log('info', `Embedding ${done}/${missing.length}`);
-      await this.save(job);
-    });
+    let n = 0;
+    try {
+      n = await this.knowledge.embedPassages(missing, async (done) => {
+        job.logs = job.logs.filter((l) => !l.message.startsWith('Embedding '));
+        log('info', `Embedding ${done}/${missing.length}`);
+        await this.save(job);
+      });
+    } catch (error) {
+      // The provider's daily quota is used up: keyword search already works for these passages,
+      // and the background backfill embeds the rest once the quota resets.
+      if ((error as { code?: string }).code !== 'DAILY_QUOTA_EXHAUSTED') throw error;
+      const vectorsNow = await this.knowledge.vectors();
+      n = missing.filter((p) => vectorsNow.has(p.id)).length;
+      log('warn', `Daily embedding quota reached: ${missing.length - n} passages will be embedded automatically after it resets (keyword search covers them meanwhile)`);
+    }
     await this.prisma.$executeRaw`UPDATE "records"
       SET "data" = jsonb_set("data", '{embeddingStatus}', '"embedded"')
       WHERE "collection" = 'kbPassages' AND "scope" = '' AND "data"->>'documentId' = ${job.bookId}`;
