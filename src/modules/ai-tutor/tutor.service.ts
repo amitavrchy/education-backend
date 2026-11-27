@@ -1,24 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { AppException, invalid, notFound } from '../../common/exceptions/app.exception.js';
+import { Injectable } from '@nestjs/common';
+import { invalid, notFound } from '../../common/exceptions/app.exception.js';
 import { nowIso } from '../../common/utils/dates.js';
 import type { CurriculumVersion } from '../../contracts/curriculum.js';
 import type {
+  AnswerWarning,
   ChatMessage,
   Conversation,
   SourcePassage,
   TutorContext,
 } from '../../contracts/learning.js';
 import type { Question } from '../../contracts/question.js';
-import {
-  retrieve,
-  runEngine,
-  titleFrom,
-  type EngineOutput,
-} from '../../domain/tutor/tutor-engine.js';
-import {
-  AiServiceClient,
-  type AiPassage,
-} from '../../integrations/ai-service/ai-service.client.js';
+import { citation, relatedQuestions, retrieve, titleFrom } from '../../domain/retrieval.js';
+import { AiServiceClient, aiPassage } from '../../integrations/ai-service/ai-service.client.js';
 import { UsageService } from '../billing/usage.service.js';
 import { ProgressService } from '../progress/progress.service.js';
 import { RecordStoreService, type Entity, type Where } from '../records/record-store.service.js';
@@ -32,15 +25,34 @@ export interface TutorReply {
   assistant: ChatMessage;
 }
 
+type Generated = Pick<
+  ChatMessage,
+  | 'content'
+  | 'citations'
+  | 'grounding'
+  | 'confidence'
+  | 'followUps'
+  | 'relatedQuestionIds'
+  | 'warnings'
+  | 'simulated'
+>;
+
+const WARNINGS = new Set<AnswerWarning>([
+  'low_confidence',
+  'missing_kb',
+  'conflicting_sources',
+  'old_curriculum',
+  'integrity',
+  'safety',
+]);
+
 /**
- * AI tutor (docs/api/AI_TUTOR_CONTRACT.md). Pipeline: quota → safety → retrieval over ingested
- * KB passages → grounding/confidence → answer. With AI_PROVIDER=service the ShikkhaAI AI service
- * (../ai, Claude) writes the answer from the retrieved passages; otherwise the deterministic local
- * engine composes it (marked `simulated: true`). Citations always point to real passage ids.
+ * AI tutor (docs/api/AI_TUTOR_CONTRACT.md). Pipeline: quota → retrieval over ingested KB passages
+ * → the AI service (`education-ai`) writes the answer, follow-ups and warnings from those passages.
+ * Citations are the retrieved passages the model actually cited. No AI runs in this backend.
  */
 @Injectable()
 export class TutorService {
-  private readonly logger = new Logger(TutorService.name);
   private cache?: { at: number; passages: SourcePassage[]; archived: string[] };
 
   constructor(
@@ -91,9 +103,9 @@ export class TutorService {
     context: TutorContext,
     query: string,
     history: ChatMessage[],
-    variant: number,
-  ): Promise<EngineOutput & { simulated: boolean }> {
+  ): Promise<Generated> {
     const { passages, archived } = await this.knowledge();
+    const found = retrieve(query, context, passages);
     const filters: Where = context.subjectId
       ? { subjectId: [context.subjectId], status: ['published'] }
       : { levelCode: [context.levelCode], status: ['published'] };
@@ -102,58 +114,44 @@ export class TutorService {
       'all',
       { filters },
     );
-    const out = runEngine({
+    const res = await this.aiService.tutorRespond({
       query,
-      context,
-      passages,
-      questions,
-      history,
-      archivedVersionIds: archived,
-      variant,
+      context: {
+        level_code: context.levelCode,
+        grade: context.grade,
+        subject: context.subjectId,
+        chapter: context.chapterId,
+        mode: context.mode,
+        language: context.language,
+      },
+      passages: found.map((r) => aiPassage(r.p)),
+      history: history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
     });
-    if (!this.aiService.enabled || out.warnings.includes('safety'))
-      return { ...out, simulated: true };
-    // The AI service writes the answer from the passages the retriever found; citations stay the
-    // retriever's real passages, narrowed to the ones the model actually cited.
-    const byId = new Map(passages.map((p) => [p.id, p]));
-    const sources: AiPassage[] = out.citations
-      .map((c) => byId.get(c.passageId))
-      .filter((p): p is SourcePassage => !!p)
-      .map((p) => ({
-        id: p.id,
-        book_title: p.bookTitle,
-        chapter_title: p.chapterTitle,
-        page: p.page,
-        text: p.text,
-      }));
-    try {
-      const res = await this.aiService.tutorAnswer({
-        query,
-        context: {
-          level_code: context.levelCode,
-          grade: context.grade,
-          subject: context.subjectId,
-          chapter: context.chapterId,
-          mode: context.mode,
-          language: context.language,
-        },
-        passages: sources,
-        history: history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-      });
-      const cited = new Set(res.cited_passage_ids);
-      const citations = out.citations.filter((c) => cited.has(c.passageId));
-      return {
-        ...out,
-        content: res.content,
-        citations,
-        grounding: citations.length ? out.grounding : 'general',
-        simulated: res.simulated,
-      };
-    } catch (error) {
-      if (error instanceof AppException && error.code === 'SAFETY_BLOCKED') throw error;
-      this.logger.warn({ err: error }, 'AI service failed; falling back to the local engine');
-      return { ...out, simulated: true };
-    }
+    const cited = new Set(res.cited_passage_ids);
+    const used = found.filter((r) => cited.has(r.p.id));
+    const warnings = res.warnings.filter((w): w is AnswerWarning =>
+      WARNINGS.has(w as AnswerWarning),
+    );
+    if (
+      used.some((r) => archived.includes(r.p.curriculumVersionId)) &&
+      !warnings.includes('old_curriculum')
+    )
+      warnings.push('old_curriculum');
+    return {
+      content: res.content,
+      citations: used.map((r) => citation(r.p, r.score)),
+      grounding:
+        used.length === 0 ? 'general' : used.length === found.length ? 'verified' : 'partial',
+      confidence: res.confidence,
+      followUps: res.follow_ups,
+      relatedQuestionIds: relatedQuestions(
+        questions,
+        context,
+        used.map((r) => r.p),
+      ),
+      warnings,
+      simulated: res.simulated,
+    };
   }
 
   async send(
@@ -199,7 +197,7 @@ export class TutorService {
       warnings: [],
       simulated: false,
     };
-    const reply = await this.generate(convo.context, content, history, 0);
+    const reply = await this.generate(convo.context, content, history);
     const assistant: ChatMessage = {
       ...reply,
       id: RecordStoreService.newId('msg'),
@@ -251,7 +249,6 @@ export class TutorService {
       convo.context,
       prompt.content,
       msgs.slice(0, Math.max(0, idx - 1)),
-      1 + Math.floor(Math.random() * 3),
     );
     const { feedback: _f, ...rest } = target;
     const updated = { ...rest, ...reply, createdAt: nowIso() } as ChatMessage & Entity;

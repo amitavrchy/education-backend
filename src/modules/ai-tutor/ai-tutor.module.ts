@@ -1,16 +1,11 @@
 import { Module } from '@nestjs/common';
-import { AiKnowledgeModule } from '../ai-knowledge/ai-knowledge.module.js';
-import { AiTutorController } from './ai-tutor.controller.js';
-import { AiTutorService } from './ai-tutor.service.js';
-import { AiChatService } from './services/ai-chat.service.js';
-import { RagService } from './services/rag.service.js';
 import { TutorController } from './tutor.controller.js';
 import { TutorService } from './tutor.service.js';
 
+/** Tutor conversations: retrieval and storage here, answers from the AI service. */
 @Module({
-  imports: [AiKnowledgeModule],
-  controllers: [AiTutorController, TutorController],
-  providers: [AiTutorService, AiChatService, RagService, TutorService],
-  exports: [AiChatService, TutorService],
+  controllers: [TutorController],
+  providers: [TutorService],
+  exports: [TutorService],
 })
 export class AiTutorModule {}

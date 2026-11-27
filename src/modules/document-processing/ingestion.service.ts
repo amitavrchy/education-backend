@@ -17,7 +17,7 @@ import {
   STORAGE_PROVIDER,
   type StorageProvider,
 } from '../../infrastructure/storage/storage.interface.js';
-import { chunkText } from '../ai-knowledge/services/text-chunker.js';
+import { chunkText } from './text-chunker.js';
 import { RecordStoreService, type Entity } from '../records/record-store.service.js';
 
 const JOBS = { collection: 'ingestionJobs', scope: '' };

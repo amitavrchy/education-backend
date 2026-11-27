@@ -7,7 +7,7 @@ import { CurrentUser, RequirePermissions } from '../../common/decorators/index.j
 import { AppException } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { zparse } from '../../common/utils/zod.util.js';
-import { streamChunks } from '../../domain/tutor/tutor-engine.js';
+import { streamChunks } from '../../domain/retrieval.js';
 import { assertSelf } from '../access/access-policy.service.js';
 import { TutorService } from './tutor.service.js';
 

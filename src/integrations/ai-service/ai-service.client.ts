@@ -64,6 +64,61 @@ export interface GeneratedQuestion {
   source_passage_ids: string[];
 }
 
+export interface TutorReplyResult extends TutorAnswerResult {
+  follow_ups: string[];
+  warnings: string[];
+  confidence: number;
+}
+
+export interface AvatarAnswerResult {
+  text: string;
+  spoken: string;
+  cited_pages: number[];
+  grounded: 'book' | 'greeting' | 'out_of_scope';
+  follow_ups: string[];
+  simulated: boolean;
+  model: string;
+}
+
+export interface VoiceReplyResult {
+  text: string;
+  next_question: string;
+  score: { got: number; max: number } | null;
+  simulated: boolean;
+  model: string;
+}
+
+export interface AudioLessonResult {
+  title: string;
+  segments: { title: string; text: string }[];
+  simulated: boolean;
+  model: string;
+}
+
+export interface FlashcardsResult {
+  cards: { front: string; back: string; hint: string; tag: string }[];
+  simulated: boolean;
+  model: string;
+}
+
+export interface NoteResult {
+  title: string;
+  html: string;
+  simulated: boolean;
+  model: string;
+}
+
+export interface WritingResult {
+  scores: { grammar: number; vocabulary: number; structure: number; task: number };
+  overall: number;
+  issues: { text: string; why: string; fix: string }[];
+  strengths: string[];
+  simulated: boolean;
+  model: string;
+}
+
+type Lang = 'bn' | 'en' | 'mixed';
+
 const DATA_URL = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/;
 
 /** `data:image/png;base64,...` → AI image input; null for anything else (e.g. seeded SVG previews). */
@@ -159,4 +214,98 @@ export class AiServiceClient {
       input,
     );
   }
+
+  tutorRespond(input: Parameters<AiServiceClient['tutorAnswer']>[0]) {
+    return this.post<TutorReplyResult>('/v1/tutor/respond', input);
+  }
+
+  avatarAnswer(input: {
+    query: string;
+    book_title: string;
+    avatar_name: string;
+    language: Lang;
+    persona: { style: string; answer_length: string; use_examples: boolean };
+    strict_scope: boolean;
+    chapters: string[];
+    pages: { page: number; chapter_title: string; heading: string; text: string }[];
+    history: { role: 'user' | 'assistant'; content: string }[];
+  }) {
+    return this.post<AvatarAnswerResult>('/v1/avatar/answer', input);
+  }
+
+  voiceReply(input: {
+    text: string;
+    mode: 'tutor' | 'oral_exam';
+    language: Lang;
+    subject?: string;
+    oral_question?: string;
+    turns: { speaker: 'student' | 'tutor'; text: string }[];
+  }) {
+    return this.post<VoiceReplyResult>('/v1/voice/reply', input);
+  }
+
+  audioLesson(input: {
+    subject: string;
+    chapter: string;
+    topics: string[];
+    passages: AiPassage[];
+    language: Lang;
+    minutes: number;
+  }) {
+    return this.post<AudioLessonResult>('/v1/audio/lesson', input);
+  }
+
+  flashcards(input: {
+    subject: string;
+    chapter: string;
+    topics: string[];
+    passages: AiPassage[];
+    count: number;
+    language: Lang;
+  }) {
+    return this.post<FlashcardsResult>('/v1/study/flashcards', input);
+  }
+
+  note(input: {
+    kind: string;
+    subject: string;
+    chapter: string;
+    topic: string;
+    topics: string[];
+    passages: AiPassage[];
+    question_text?: string;
+    answer_text?: string;
+    conversation?: string;
+    upload_text?: string;
+    language: Lang;
+  }) {
+    return this.post<NoteResult>('/v1/study/notes', input);
+  }
+
+  writing(input: {
+    text: string;
+    kind: string;
+    prompt: string;
+    min_words: number;
+    max_words: number;
+  }) {
+    return this.post<WritingResult>('/v1/english/writing', input);
+  }
+}
+
+/** Knowledge-base passage → the AI service's passage shape. */
+export function aiPassage(p: {
+  id: string;
+  bookTitle: string;
+  chapterTitle: string;
+  page: number;
+  text: string;
+}): AiPassage {
+  return {
+    id: p.id,
+    book_title: p.bookTitle,
+    chapter_title: p.chapterTitle,
+    page: p.page,
+    text: p.text,
+  };
 }

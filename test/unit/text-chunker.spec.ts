@@ -1,4 +1,4 @@
-import { chunkText } from '../../src/modules/ai-knowledge/services/text-chunker.js';
+import { chunkText } from '../../src/modules/document-processing/text-chunker.js';
 
 describe('chunkText', () => {
   it('keeps short text as one chunk', () => {

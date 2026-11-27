@@ -4,13 +4,24 @@ import { nowIso } from '../../common/utils/dates.js';
 import type { Topic } from '../../contracts/curriculum.js';
 import type { Book } from '../../contracts/learning.js';
 import {
-  answerFromBook,
   defaultAvatarFor,
-  type AvatarAnswer,
+  scopeChapters,
+  searchPages,
+  tokens,
   type AvatarCitation,
   type BookAvatar,
-} from '../../domain/avatar/book-avatar-engine.js';
+} from '../../domain/avatar/book-pages.js';
+import { AiServiceClient } from '../../integrations/ai-service/ai-service.client.js';
 import { RecordStoreService, type Entity } from '../records/record-store.service.js';
+
+export interface AvatarAnswer {
+  text: string;
+  spoken: string;
+  citations: AvatarCitation[];
+  grounded: 'book' | 'greeting' | 'out_of_scope';
+  followUps: string[];
+  simulated: boolean;
+}
 
 export interface AvatarSession {
   id: string;
@@ -64,15 +75,72 @@ const sessionsOf = (studentId: string) => ({ collection: 'avatarSessions', scope
 const messagesOf = (studentId: string) => ({ collection: 'avatarMessages', scope: studentId });
 
 /**
- * Per-book avatar teacher. Answers are composed on the server from the book's pages only
- * (deterministic engine, `simulated: true`); the stored sessions, messages, counters and
- * reports can't be written by clients directly.
+ * Per-book avatar teacher. The book's pages are searched here and the AI service writes the
+ * answer from them only; the stored sessions, messages, counters and reports can't be written by
+ * clients directly.
  */
 @Injectable()
 export class AvatarService {
   private topicsCache?: { at: number; topics: Topic[] };
 
-  constructor(private readonly store: RecordStoreService) {}
+  constructor(
+    private readonly store: RecordStoreService,
+    private readonly ai: AiServiceClient,
+  ) {}
+
+  /** Finds the book pages for the question here; the AI service writes the answer from them. */
+  private async compose(
+    book: Book,
+    avatar: BookAvatar,
+    topics: Topic[],
+    query: string,
+    history: AvatarMessage[] = [],
+  ): Promise<AvatarAnswer> {
+    const lang = /[ঀ-৿]/.test(query) ? 'bn' : /[a-z]/i.test(query) ? 'en' : avatar.voice.language;
+    const pages = searchPages({ book, avatar, topics, query }, tokens(query), lang).slice(0, 5);
+    const res = await this.ai.avatarAnswer({
+      query,
+      book_title: lang === 'en' ? book.title.en : book.title.bn,
+      avatar_name: lang === 'en' ? avatar.name.en : avatar.name.bn,
+      language: lang,
+      persona: {
+        style: avatar.persona.style,
+        answer_length: avatar.persona.answerLength,
+        use_examples: avatar.persona.useExamples,
+      },
+      strict_scope: avatar.strictBookScope,
+      chapters: scopeChapters({ book, avatar, topics, query }).map((c) =>
+        lang === 'en' ? c.title.en : c.title.bn,
+      ),
+      pages: pages.map((p) => ({
+        page: p.page,
+        chapter_title: p.chapterTitle,
+        heading: p.heading ?? '',
+        text: p.excerpt,
+      })),
+      history: history.slice(-6).map((m) => ({
+        role: m.role === 'student' ? ('user' as const) : ('assistant' as const),
+        content: m.text,
+      })),
+    });
+    const byPage = new Map(pages.map((p) => [p.page, p]));
+    return {
+      text: res.text,
+      spoken: res.spoken,
+      citations: res.cited_pages
+        .map((n) => byPage.get(n))
+        .filter((p) => !!p)
+        .map((p) => ({
+          page: p.page,
+          chapterTitle: p.chapterTitle,
+          heading: p.heading,
+          excerpt: p.excerpt,
+        })),
+      grounded: res.grounded,
+      followUps: res.follow_ups,
+      simulated: res.simulated,
+    };
+  }
 
   private async topics(): Promise<Topic[]> {
     if (this.topicsCache && Date.now() - this.topicsCache.at < 60_000)
@@ -133,7 +201,7 @@ export class AvatarService {
       citations: [],
       grounded: 'greeting',
       followUps: [],
-      simulated: true,
+      simulated: false,
     };
     await this.store.insert(sessionsOf(studentId), session as Row<AvatarSession>);
     await this.store.insert(messagesOf(studentId), greeting as Row<AvatarMessage>);
@@ -161,9 +229,13 @@ export class AvatarService {
       at: now,
       citations: [],
       followUps: [],
-      simulated: true,
+      simulated: false,
     };
-    const a = answerFromBook({ book, avatar, topics, query: trimmed });
+    const thread = await this.store.all<Row<AvatarMessage>>(messagesOf(studentId), 'all', {
+      filters: { sessionId: [sessionId] },
+    });
+    thread.sort((x, y) => x.at.localeCompare(y.at));
+    const a = await this.compose(book, avatar, topics, trimmed, thread);
     const reply: AvatarMessage = {
       id: RecordStoreService.newId('am'),
       sessionId,
@@ -174,7 +246,7 @@ export class AvatarService {
       citations: a.citations,
       grounded: a.grounded,
       followUps: a.followUps,
-      simulated: true,
+      simulated: a.simulated,
     };
     await this.store.insertMany(messagesOf(studentId), [question, reply] as Row<AvatarMessage>[]);
     const first = session.messageCount === 0;
@@ -276,6 +348,6 @@ export class AvatarService {
       this.topics(),
     ]);
     if (!book) notFound('Book');
-    return answerFromBook({ book, avatar, topics, query });
+    return this.compose(book, avatar, topics, query);
   }
 }

@@ -1,0 +1,205 @@
+import { Injectable } from '@nestjs/common';
+import { invalid, notFound } from '../../common/exceptions/app.exception.js';
+import { nowIso } from '../../common/utils/dates.js';
+import type { Chapter, Subject, Topic } from '../../contracts/curriculum.js';
+import type { SourcePassage } from '../../contracts/learning.js';
+import { passagesFor } from '../../domain/retrieval.js';
+import { AiServiceClient, aiPassage } from '../../integrations/ai-service/ai-service.client.js';
+import { UsageService } from '../billing/usage.service.js';
+import { RecordStoreService, type Entity } from '../records/record-store.service.js';
+
+const G = (collection: string) => ({ collection, scope: '' });
+type Lang = 'bn' | 'en' | 'mixed';
+
+/** Seconds per character when the device's TTS reads Bangla (same estimate as the apps). */
+const CPS = 13;
+
+export interface VoiceInput {
+  text: string;
+  mode: 'tutor' | 'oral_exam';
+  language: Lang;
+  subjectId?: string;
+  oralQuestion?: string;
+  turns: { speaker: 'student' | 'tutor'; text: string }[];
+}
+
+export interface NoteInput {
+  kind: string;
+  chapterId?: string;
+  topicId?: string;
+  questionText?: string;
+  answerText?: string;
+  conversation?: string;
+  uploadText?: string;
+  language: Lang;
+}
+
+/**
+ * Study features written by the AI service (voice tutor, audio lessons, flashcards, notes,
+ * English writing feedback). This side checks quotas, gathers the chapter and its textbook
+ * passages, and returns the results in the apps' contracts.
+ */
+@Injectable()
+export class StudyAiService {
+  constructor(
+    private readonly ai: AiServiceClient,
+    private readonly store: RecordStoreService,
+    private readonly usage: UsageService,
+  ) {}
+
+  private async chapter(chapterId: string) {
+    const chapter =
+      (await this.store.find<Chapter & Entity>(G('chapters'), chapterId)) ?? notFound('Chapter');
+    const [subject, topics, passages] = await Promise.all([
+      this.store.find<Subject & Entity>(G('subjects'), chapter.subjectId),
+      this.store.all<Topic & Entity>(G('topics'), 'all', { filters: { chapterId: [chapterId] } }),
+      this.store.all<SourcePassage & Entity>(G('kbPassages'), 'all', {
+        filters: { chapterId: [chapterId] },
+      }),
+    ]);
+    topics.sort((a, b) => a.order - b.order);
+    return { chapter, subject, topics, passages };
+  }
+
+  async voiceReply(studentId: string, input: VoiceInput) {
+    await this.usage.consume(studentId, 'voice');
+    const subject = input.subjectId
+      ? await this.store.find<Subject & Entity>(G('subjects'), input.subjectId)
+      : undefined;
+    const res = await this.ai.voiceReply({
+      text: input.text,
+      mode: input.mode,
+      language: input.language,
+      subject: subject?.name.en,
+      oral_question: input.oralQuestion,
+      turns: input.turns.slice(-10),
+    });
+    return {
+      text: res.text,
+      nextQuestion: res.next_question || undefined,
+      score: res.score ?? undefined,
+      simulated: res.simulated,
+    };
+  }
+
+  /** Writes a new audio lesson for a chapter into the shared lesson catalogue. */
+  async audioLesson(userId: string, chapterId: string, minutes: number) {
+    await this.usage.consume(userId, 'ai');
+    const { chapter, subject, topics, passages } = await this.chapter(chapterId);
+    const res = await this.ai.audioLesson({
+      subject: subject?.name.bn ?? chapter.subjectId,
+      chapter: chapter.title.bn,
+      topics: topics.map((t) => t.title.bn),
+      passages: passagesFor(passages, { chapterId }).map(aiPassage),
+      language: 'bn',
+      minutes,
+    });
+    if (!res.segments.length) invalid('NO_ANSWER', undefined, 502);
+    let t = 0;
+    const segments = res.segments.map((s, i) => {
+      const seg = { id: `seg-${i}`, startSec: Math.round(t), title: s.title, text: s.text };
+      t += s.text.length / CPS + 1;
+      return seg;
+    });
+    const last = segments[segments.length - 1];
+    const lesson = {
+      id: RecordStoreService.newId('aud'),
+      title: { bn: res.title, en: `${chapter.title.en} — audio lesson` },
+      kind: 'generated',
+      subjectId: chapter.subjectId,
+      chapterId,
+      language: 'bn',
+      durationSec: Math.round(last.startSec + last.text.length / CPS),
+      segments,
+      createdAt: nowIso(),
+      createdBy: userId,
+      simulated: res.simulated,
+    };
+    return this.store.insert(G('audioLessons'), lesson);
+  }
+
+  /** Card drafts for a chapter; the app saves the ones the student keeps into a deck. */
+  async flashcards(studentId: string, chapterId: string, count: number) {
+    await this.usage.consume(studentId, 'ai');
+    const { chapter, subject, topics, passages } = await this.chapter(chapterId);
+    const res = await this.ai.flashcards({
+      subject: subject?.name.bn ?? chapter.subjectId,
+      chapter: chapter.title.bn,
+      topics: topics.map((t) => t.title.bn),
+      passages: passagesFor(passages, { chapterId }).map(aiPassage),
+      count,
+      language: 'bn',
+    });
+    return {
+      cards: res.cards.map((c) => ({
+        front: c.front,
+        back: c.back,
+        hint: c.hint || undefined,
+        tags: c.tag ? [c.tag] : [],
+      })),
+      simulated: res.simulated,
+    };
+  }
+
+  async note(studentId: string, input: NoteInput) {
+    await this.usage.consume(studentId, 'ai');
+    let subjectName = '';
+    let chapterTitle = '';
+    let topicTitle = '';
+    let topicTitles: string[] = [];
+    let passages: SourcePassage[] = [];
+    const topic = input.topicId
+      ? await this.store.find<Topic & Entity>(G('topics'), input.topicId)
+      : undefined;
+    const chapterId = input.chapterId ?? topic?.chapterId;
+    if (chapterId) {
+      const c = await this.chapter(chapterId);
+      subjectName = c.subject?.name.bn ?? '';
+      chapterTitle = c.chapter.title.bn;
+      topicTitles = c.topics.map((t) => t.title.bn);
+      passages = passagesFor(c.passages, { chapterId, topicId: topic?.id });
+    }
+    if (topic) topicTitle = topic.title.bn;
+    if (!chapterId && !input.questionText && !input.conversation && !input.uploadText)
+      invalid('VALIDATION');
+    const res = await this.ai.note({
+      kind: input.kind,
+      subject: subjectName,
+      chapter: chapterTitle,
+      topic: topicTitle,
+      topics: topicTitles,
+      passages: passages.map(aiPassage),
+      question_text: input.questionText,
+      answer_text: input.answerText,
+      conversation: input.conversation,
+      upload_text: input.uploadText,
+      language: input.language,
+    });
+    return { title: res.title, html: res.html, simulated: res.simulated };
+  }
+
+  /** English writing feedback in the apps' WritingFeedback shape. */
+  async writing(
+    studentId: string,
+    input: { text: string; kind: string; prompt: string; minWords: number; maxWords: number },
+  ) {
+    await this.usage.consume(studentId, 'ai');
+    const clean = input.text.trim();
+    const res = await this.ai.writing({
+      text: clean,
+      kind: input.kind,
+      prompt: input.prompt,
+      min_words: input.minWords,
+      max_words: input.maxWords,
+    });
+    return {
+      words: clean.split(/\s+/).filter(Boolean).length,
+      sentences: clean.split(/[.!?]+/).filter((s) => s.trim().length > 2).length,
+      scores: res.scores,
+      overall: res.overall,
+      issues: res.issues.map((i) => ({ text: i.text, why: i.why, fix: i.fix || undefined })),
+      strengths: res.strengths,
+      simulated: res.simulated,
+    };
+  }
+}

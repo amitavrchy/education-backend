@@ -19,9 +19,6 @@ export const integrationsConfig = registerAs('integrations', () => {
   return {
     ai: {
       provider: env.AI_PROVIDER,
-      apiKey: env.AI_API_KEY,
-      chatModel: env.AI_CHAT_MODEL,
-      embeddingModel: env.AI_EMBEDDING_MODEL,
       serviceUrl: env.AI_SERVICE_URL,
       serviceKey: env.AI_SERVICE_KEY,
       serviceTimeoutMs: env.AI_SERVICE_TIMEOUT_MS,

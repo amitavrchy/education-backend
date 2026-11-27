@@ -6,7 +6,7 @@ import { CurrentUser, RequirePermissions } from '../../common/decorators/index.j
 import { notFound } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { zparse } from '../../common/utils/zod.util.js';
-import type { BookAvatar } from '../../domain/avatar/book-avatar-engine.js';
+import type { BookAvatar } from '../../domain/avatar/book-pages.js';
 import { AccessPolicyService, assertSelf } from '../access/access-policy.service.js';
 import { AvatarService } from './avatar.service.js';
 

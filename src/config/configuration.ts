@@ -71,14 +71,12 @@ export const envSchema = z
     UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().positive().default(25),
 
     // Integrations (all optional; "none"/"console" keeps them disabled)
-    // service = the ShikkhaAI AI service (../ai, FastAPI + Claude) at AI_SERVICE_URL.
-    AI_PROVIDER: z.enum(['none', 'mock', 'service']).default('none'),
+    // service = the ShikkhaAI AI service (education-ai) at AI_SERVICE_URL. No AI runs here:
+    // with "none" every AI feature answers 503 AI_NOT_CONFIGURED.
+    AI_PROVIDER: z.enum(['none', 'service']).default('none'),
     AI_SERVICE_URL: z.url().default('http://localhost:8100'),
     AI_SERVICE_KEY: z.string().optional(),
     AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
-    AI_API_KEY: z.string().optional(),
-    AI_CHAT_MODEL: z.string().optional(),
-    AI_EMBEDDING_MODEL: z.string().optional(),
     EMAIL_PROVIDER: z.enum(['console', 'none']).default('console'),
     EMAIL_FROM: z.string().default('ShikkhaAI <no-reply@shikkha.ai>'),
     SMS_PROVIDER: z.enum(['console', 'none']).default('console'),
