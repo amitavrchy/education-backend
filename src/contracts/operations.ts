@@ -96,11 +96,37 @@ export interface Payment {
   subscriptionId?: string;
   planCode: PlanCode;
   amount: number;
-  method: 'bkash_mock' | 'nagad_mock' | 'card_mock' | 'bank_mock';
+  method: PaymentMethod;
   status: 'success' | 'failed' | 'pending' | 'refunded';
   invoiceNo: string;
   createdAt: string;
   failureReason?: string;
+  /** Manual mobile-wallet payment: what the payer sent, checked by an admin. */
+  cycle?: 'monthly' | 'yearly';
+  couponCode?: string;
+  senderNumber?: string;
+  transactionId?: string;
+  verification?: 'awaiting' | 'approved' | 'rejected';
+  verifiedBy?: string;
+  verifiedAt?: string;
+  reviewNote?: string;
+}
+
+/** Manual wallets (send money, then submit the transaction id) and the demo gateway's methods. */
+export type ManualPaymentMethod = 'bkash' | 'nagad' | 'rocket' | 'upay';
+export type PaymentMethod =
+  ManualPaymentMethod | 'bkash_mock' | 'nagad_mock' | 'card_mock' | 'bank_mock';
+
+/** Where students send money (document `paymentSettings`, edited by billing admins). */
+export interface PaymentSettings {
+  id: 'payment';
+  methods: {
+    method: ManualPaymentMethod;
+    number: string;
+    accountType: 'personal' | 'agent' | 'merchant';
+    enabled: boolean;
+    instructions?: string;
+  }[];
 }
 
 export interface Coupon extends Timestamps {

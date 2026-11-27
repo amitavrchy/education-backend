@@ -2,14 +2,19 @@ import { Inject, Injectable } from '@nestjs/common';
 import { forbidden, invalid, notFound } from '../../common/exceptions/app.exception.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { daysFromNow, nowIso } from '../../common/utils/dates.js';
+import { DEFAULT_ROLE_PERMISSIONS } from '../../common/auth/permissions.js';
 import type {
   Coupon,
+  ManualPaymentMethod,
   Payment,
+  PaymentSettings,
   Plan,
   PlanCode,
   RefundRequest,
   Subscription,
 } from '../../contracts/operations.js';
+import type { UserRole } from '../../contracts/user.js';
+import { DocumentsService } from '../records/documents.service.js';
 import type { UserAccount } from '../../contracts/people.js';
 import { integrationsConfig, type IntegrationsConfig } from '../../config/index.js';
 import { AuditLogsService } from '../audit-logs/audit-logs.service.js';
@@ -31,9 +36,20 @@ export interface CheckoutInput {
   cycle: 'monthly' | 'yearly';
   method: Payment['method'];
   account: string;
+  /** Manual wallets: the transaction id from the bKash/Nagad/Rocket/Upay receipt. */
+  transactionId?: string;
   couponCode?: string;
   startTrial?: boolean;
 }
+
+export const MANUAL_METHODS: ManualPaymentMethod[] = ['bkash', 'nagad', 'rocket', 'upay'];
+export const PAYMENT_SETTINGS_KEY = 'paymentSettings';
+const METHOD_NAME: Record<ManualPaymentMethod, string> = {
+  bkash: 'বিকাশ',
+  nagad: 'নগদ',
+  rocket: 'রকেট',
+  upay: 'উপায়',
+};
 
 export function priceWithCoupon(
   base: number,
@@ -59,8 +75,191 @@ export class BillingService {
     private readonly usage: UsageService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditLogsService,
+    private readonly documents: DocumentsService,
     @Inject(integrationsConfig.KEY) private readonly config: IntegrationsConfig,
   ) {}
+
+  private get manual() {
+    return this.config.payment.provider === 'manual';
+  }
+
+  /** Wallet numbers students send money to (only enabled ones with a number). */
+  async paymentSettings(): Promise<PaymentSettings> {
+    return (
+      (await this.documents.find<PaymentSettings>(PAYMENT_SETTINGS_KEY)) ?? {
+        id: 'payment',
+        methods: [],
+      }
+    );
+  }
+
+  /** Users who verify payments (roles with billing.manage). */
+  private async billingAdmins(): Promise<string[]> {
+    const roles = (Object.keys(DEFAULT_ROLE_PERMISSIONS) as UserRole[]).filter((r) =>
+      DEFAULT_ROLE_PERMISSIONS[r].includes('billing.manage'),
+    );
+    const admins = await this.store.all<UserAccount & Entity>(USERS, [{ role: roles }]);
+    return admins.map((a) => a.id);
+  }
+
+  /** Applies a paid (or trial) plan to the user's subscription. */
+  private async activate(
+    userId: string,
+    userName: string,
+    plan: Plan,
+    input: { planCode: PlanCode; cycle: 'monthly' | 'yearly'; total: number; trial?: boolean },
+    coupon: Coupon | null,
+  ): Promise<Subscription> {
+    const existing = await this.activeSubscription(userId);
+    const patch: Partial<Subscription> = {
+      planCode: input.planCode,
+      cycle: input.cycle,
+      amount: input.total,
+      status: input.trial ? 'trialing' : 'active',
+      renewsAt: daysFromNow(input.trial ? plan.trialDays : input.cycle === 'yearly' ? 365 : 30),
+      trialEndsAt: input.trial ? daysFromNow(plan.trialDays) : undefined,
+      couponCode: coupon?.code,
+      cancelAt: undefined,
+      updatedAt: nowIso(),
+    };
+    let sub: Subscription;
+    if (existing) {
+      sub = { ...existing, ...patch };
+      await this.store.replace(SUBS, sub as Subscription & Entity, OWNED);
+    } else {
+      sub = {
+        id: RecordStoreService.newId('sub'),
+        userId,
+        userName,
+        startedAt: nowIso(),
+        createdAt: nowIso(),
+        ...patch,
+      } as Subscription;
+      await this.store.insert(SUBS, sub as Subscription & Entity, OWNED);
+    }
+    await this.setPlan(userId, input.planCode);
+    if (coupon)
+      await this.store.replace(COUPONS, {
+        ...coupon,
+        redeemed: coupon.redeemed + 1,
+        updatedAt: nowIso(),
+      });
+    return sub;
+  }
+
+  /**
+   * Manual wallet payment: the student sent money to our bKash/Nagad/Rocket/Upay number and
+   * submits their number and the transaction id. Nothing changes until an admin verifies it.
+   */
+  private async manualCheckout(user: AuthenticatedUser, input: CheckoutInput) {
+    const method = input.method as ManualPaymentMethod;
+    if (!MANUAL_METHODS.includes(method)) invalid('PAYMENT_METHOD_UNAVAILABLE');
+    const settings = await this.paymentSettings();
+    if (!settings.methods.some((m) => m.method === method && m.enabled && m.number))
+      invalid('PAYMENT_METHOD_UNAVAILABLE');
+    const trx = (input.transactionId ?? '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{6,20}$/.test(trx)) invalid('TRANSACTION_ID_INVALID');
+    const sender = input.account.replace(/[\s-]/g, '');
+    if (!/^(\+?88)?01[3-9]\d{8}$/.test(sender)) invalid('SENDER_NUMBER_INVALID');
+    const used = await this.store.all<Payment & Entity>(PAYMENTS, [{ transactionId: [trx] }]);
+    if (used.some((p) => p.method === method && p.status !== 'failed'))
+      invalid('TRANSACTION_ID_USED', undefined, 409);
+    const pending = await this.store.all<Payment & Entity>(PAYMENTS, [
+      { userId: [user.id], status: ['pending'] },
+    ]);
+    if (pending.length) invalid('PAYMENT_ALREADY_PENDING', undefined, 409);
+
+    const account = await this.account(user.id);
+    const plan = await this.plan(input.planCode);
+    const coupon = input.couponCode
+      ? await this.validateCoupon(input.couponCode, input.planCode)
+      : null;
+    const base = input.cycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+    const { total } = priceWithCoupon(base, coupon);
+    const payment: Payment = {
+      id: RecordStoreService.newId('pay'),
+      userId: user.id,
+      userName: account.name,
+      planCode: input.planCode,
+      amount: total,
+      method,
+      status: 'pending',
+      invoiceNo: `INV-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`,
+      createdAt: nowIso(),
+      cycle: input.cycle,
+      couponCode: coupon?.code,
+      senderNumber: sender,
+      transactionId: trx,
+      verification: 'awaiting',
+    };
+    await this.store.insert(PAYMENTS, payment as Payment & Entity, OWNED);
+    await this.notifications.push([user.id], {
+      type: 'payment',
+      title: 'পেমেন্ট যাচাইয়ের অপেক্ষায়',
+      body: `${plan.name.bn} · ৳${total} · ${METHOD_NAME[method]} TrxID ${trx}`,
+      href: '/student/subscription',
+      priority: 'normal',
+    });
+    const admins = await this.billingAdmins();
+    if (admins.length)
+      await this.notifications.push(admins, {
+        type: 'payment',
+        title: 'নতুন পেমেন্ট যাচাই করুন',
+        body: `${account.name} · ${plan.name.bn} · ৳${total} · ${METHOD_NAME[method]} ${sender} · TrxID ${trx}`,
+        href: '/admin/subscriptions?tab=verify',
+        priority: 'high',
+      });
+    return payment;
+  }
+
+  /** Admin: approve (activates the plan) or reject (with a reason) a manual payment. */
+  async verifyPayment(admin: AuthenticatedUser, paymentId: string, approve: boolean, note: string) {
+    const p = (await this.store.find<Payment & Entity>(PAYMENTS, paymentId)) ?? notFound('Payment');
+    if (p.status !== 'pending' || p.verification !== 'awaiting')
+      invalid('PAYMENT_NOT_PENDING', undefined, 409);
+    if (!approve && !note.trim()) invalid('REASON_REQUIRED');
+    const plan = await this.plan(p.planCode);
+    const updated: Payment = {
+      ...p,
+      status: approve ? 'success' : 'failed',
+      verification: approve ? 'approved' : 'rejected',
+      verifiedBy: admin.id,
+      verifiedAt: nowIso(),
+      reviewNote: note.trim() || undefined,
+      failureReason: approve ? undefined : note.trim(),
+    };
+    if (approve) {
+      const coupon = p.couponCode
+        ? await this.validateCoupon(p.couponCode, p.planCode).catch(() => null)
+        : null;
+      const sub = await this.activate(
+        p.userId,
+        p.userName,
+        plan,
+        { planCode: p.planCode, cycle: p.cycle ?? 'monthly', total: p.amount },
+        coupon,
+      );
+      updated.subscriptionId = sub.id;
+    }
+    await this.store.replace(PAYMENTS, updated as Payment & Entity, OWNED);
+    await this.notifications.push([p.userId], {
+      type: 'payment',
+      title: approve ? 'পেমেন্ট যাচাই সম্পন্ন — প্ল্যান চালু' : 'পেমেন্ট যাচাই হয়নি',
+      body: approve
+        ? `${plan.name.bn} চালু হয়েছে · ৳${p.amount} · ${p.invoiceNo}`
+        : `কারণ: ${note.trim()} · TrxID ${p.transactionId ?? ''}`,
+      href: '/student/subscription',
+      priority: approve ? 'normal' : 'high',
+    });
+    await this.audit.record({
+      actor: admin,
+      category: 'billing',
+      action: approve ? 'payment.verify' : 'payment.reject',
+      target: { type: 'Payment', id: p.id, label: p.invoiceNo },
+      details: `${p.userName} · ${p.method} · ${p.transactionId ?? ''} · ৳${p.amount}`,
+    });
+    return updated;
+  }
 
   private async account(userId: string) {
     return (await this.store.find<UserAccount & Entity>(USERS, userId)) ?? notFound('User');
@@ -143,6 +342,7 @@ export class BillingService {
   }
 
   async checkout(user: AuthenticatedUser, input: CheckoutInput) {
+    if (this.manual && !input.startTrial) return this.manualCheckout(user, input);
     if (this.config.payment.provider !== 'mock' && !input.startTrial)
       invalid('PAYMENTS_UNAVAILABLE', undefined, 503);
     const account = await this.account(user.id);

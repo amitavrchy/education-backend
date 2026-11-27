@@ -82,7 +82,8 @@ export const envSchema = z
     EMAIL_PROVIDER: z.enum(['console', 'none']).default('console'),
     EMAIL_FROM: z.string().default('ShikkhaAI <no-reply@shikkha.ai>'),
     SMS_PROVIDER: z.enum(['console', 'none']).default('console'),
-    PAYMENT_PROVIDER: z.enum(['none', 'mock']).default('none'),
+    // manual = bKash/Nagad/Rocket/Upay send-money with an admin-verified transaction id.
+    PAYMENT_PROVIDER: z.enum(['none', 'mock', 'manual']).default('manual'),
   })
   .superRefine((env, ctx) => {
     if (env.AI_PROVIDER === 'service' && (!env.AI_SERVICE_KEY || env.AI_SERVICE_KEY.length < 32)) {

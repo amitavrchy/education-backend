@@ -20,8 +20,19 @@ const quoteBody = z.object({
 const checkoutBody = z.object({
   planCode,
   cycle,
-  method: z.enum(['bkash_mock', 'nagad_mock', 'card_mock', 'bank_mock']),
+  method: z.enum([
+    'bkash',
+    'nagad',
+    'rocket',
+    'upay',
+    'bkash_mock',
+    'nagad_mock',
+    'card_mock',
+    'bank_mock',
+  ]),
+  /** Payer's wallet number (manual) or demo account/card (mock). */
   account: z.string().min(4).max(40),
+  transactionId: z.string().trim().max(40).optional(),
   couponCode: z.string().max(60).optional(),
   startTrial: z.boolean().optional(),
 });
@@ -31,6 +42,7 @@ const refundBody = z.object({
   reason: z.string().min(1).max(1000),
 });
 const decideBody = z.object({ approve: z.boolean() });
+const verifyBody = z.object({ approve: z.boolean(), note: z.string().max(500).default('') });
 const consumeBody = z.object({
   kind: z.enum(['ai', 'voice', 'photo', 'handwriting']),
   amount: z.number().int().min(1).max(120).default(1),
@@ -65,6 +77,22 @@ export class BillingController {
   @ApiOperation({ summary: 'Pay for / start a trial of a plan → Payment' })
   checkout(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
     return this.billing.checkout(user, zparse(checkoutBody, body));
+  }
+
+  @Get('billing/payment-settings')
+  @ApiOperation({ summary: 'Wallet numbers to send money to (bKash, Nagad, Rocket, Upay)' })
+  async paymentSettings() {
+    const s = await this.billing.paymentSettings();
+    return { ...s, methods: s.methods.filter((m) => m.enabled && m.number) };
+  }
+
+  @Post('billing/payments/:id/verify')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('billing.manage')
+  @ApiOperation({ summary: 'Admin: approve (activates the plan) or reject a manual payment' })
+  verify(@Param('id') id: string, @Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
+    const dto = zparse(verifyBody, body);
+    return this.billing.verifyPayment(user, id, dto.approve, dto.note);
   }
 
   @Post('billing/payments/:id/confirm')

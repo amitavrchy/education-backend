@@ -40,6 +40,8 @@ export class DocumentsController {
     systemConfig: { read: () => true, write: perms('system.config') },
     [PERMISSION_MATRIX_KEY]: { read: (u) => !!u, write: perms('roles.manage') },
     aiSettings: { read: perms('kb.view', 'kb.manage'), write: perms('kb.manage') },
+    // Wallet numbers for manual payments (students read them at checkout).
+    paymentSettings: { read: (u) => !!u, write: perms('billing.manage') },
   };
 
   private readonly prefixed: Record<string, DocRule> = {

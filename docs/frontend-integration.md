@@ -59,6 +59,8 @@ Per-student collections take the student id as the first segment. The full list 
 | `kbService.simulateQuery` | `POST /kb/query` |
 | `reviewService.transition / comment / suggest / resolveSuggestion / saveQuestion` | `POST /review-items/:id/transition`, `/comments`, `/suggestions`, `/suggestions/:sid/resolve`, `POST /review-items/questions` |
 | `billingService.*` | `GET /billing/me`, `POST /billing/quote`, `/billing/checkout`, `/billing/payments/:id/confirm`, `/billing/cancel`, `/billing/resume`, `/billing/downgrade`, `/billing/refunds`, `/billing/refunds/:id/decide` |
+| manual payments (bKash, Nagad, Rocket, Upay) | `GET /billing/payment-settings` (wallet numbers), `POST /billing/checkout` with `method`, `account` (sender number) and `transactionId` → pending payment; admin `POST /billing/payments/:id/verify {approve, note}` activates the plan or rejects it. Numbers are edited in the `paymentSettings` document (billing.manage). |
+| AI study tools | `POST /voice/:sid/reply`, `/audio-lessons/generate`, `/flashcards/:sid/generate`, `/notes/:sid/generate`, `/english/:sid/writing`, `/ocr/:sid/solve`, `/evaluations/:sid/:id/evaluate` (all answered by education-ai) |
 | `usageService.get / consume` | `GET /usage/:uid`, `POST /usage/:uid/consume` |
 | `guardianService.*` | `POST /guardian/link-code` (student), `GET /guardian/children`, `POST /guardian/links`, `/guardian/links/:id/confirm`, `/guardian/links/:id/unlink`, `/guardian/feedback/:id/reply` |
 | `notificationService.markAllRead` / admin broadcast | `POST /notifications/read-all`, `POST /notifications/broadcast` |
