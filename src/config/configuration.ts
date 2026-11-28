@@ -119,6 +119,21 @@ export const envSchema = z
         message: 'AUTH_DEMO_MODE must be false in production',
       });
     }
+    // In production a console "provider" never delivers sign-in codes.
+    if (env.NODE_ENV === 'production' && env.EMAIL_PROVIDER === 'console') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EMAIL_PROVIDER'],
+        message: 'EMAIL_PROVIDER=console is not allowed in production (emails and OTP codes would never be delivered)',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.SMS_PROVIDER === 'console') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SMS_PROVIDER'],
+        message: 'SMS_PROVIDER=console is not allowed in production (phone OTPs would never be delivered); set "none" (phone sign-in disabled) until an SMS gateway is set up',
+      });
+    }
     if (env.NODE_ENV === 'production' && env.PAYMENT_PROVIDER === 'mock') {
       ctx.addIssue({
         code: 'custom',

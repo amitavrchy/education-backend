@@ -22,10 +22,11 @@ class ConsoleSmsProvider implements SmsProvider {
   }
 }
 
+/** No SMS gateway: sending fails, so phone sign-up/OTP says so instead of waiting for a code that never comes. */
 class NoopSmsProvider implements SmsProvider {
   readonly name = 'none';
   send(): Promise<void> {
-    return Promise.resolve();
+    return Promise.reject(new Error('SMS_NOT_CONFIGURED'));
   }
 }
 

@@ -588,7 +588,8 @@ export class AuthService {
     if (next.length < 8) invalid('PASSWORD_TOO_SHORT', { next: ['PASSWORD_TOO_SHORT'] });
     const row = await this.prisma.user.findUnique({ where: { id: user.id } });
     if (!row) notFound('User');
-    const ok = await this.passwordMatches(row, current);
+    // Always the real hash check: the demo-mode "any password" shortcut applies to sign-in only.
+    const ok = await this.hasher.verify(current, row.passwordHash);
     if (!ok) invalid('WRONG_PASSWORD', { current: ['WRONG_PASSWORD'] });
     await this.prisma.$transaction([
       this.prisma.user.update({ where: { id: user.id }, data: { passwordHash: await this.hasher.hash(next) } }),
